@@ -596,7 +596,7 @@
     const idx = new Map(members.map((m, i) => [m.name, i]));
     const pos = members.map((m, i) => ({ x: Math.cos((2 * Math.PI * i) / N) * 150, y: Math.sin((2 * Math.PI * i) / N) * 150, vx: 0, vy: 0 }));
     const E = edges.map((e) => ({ ...e, s: idx.get(e.a), t: idx.get(e.b) })).filter((e) => e.s !== undefined && e.t !== undefined);
-    const ideal = N > 40 ? 45 : 80;
+    const ideal = N > 40 ? 60 : 150;
     for (let it = 0; it < 320; it++) {
       const alpha = 1 - it / 320;
       for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
@@ -613,9 +613,13 @@
       for (const p of pos) { p.vx -= p.x * 0.01 * alpha; p.vy -= p.y * 0.01 * alpha; p.x += p.vx; p.y += p.vy; p.vx *= 0.55; p.vy *= 0.55; }
     }
     const xs = pos.map((p) => p.x), ys = pos.map((p) => p.y);
-    const pad = 60;
-    let vb = { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, w: Math.max(...xs) - Math.min(...xs) + 2 * pad, h: Math.max(...ys) - Math.min(...ys) + 2 * pad };
-    vb.w = Math.max(vb.w, 300); vb.h = Math.max(vb.h, 240);
+    const pad = 70;
+    // Never zoom in past 1:1 - the view box is at least the size of the 460px-tall
+    // panel, so labels keep their real size on small campaigns.
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const w = Math.max(Math.max(...xs) - Math.min(...xs) + 2 * pad + 260, 560);
+    const hh = Math.max(Math.max(...ys) - Math.min(...ys) + 2 * pad, 380);
+    let vb = { x: cx - w / 2, y: cy - hh / 2, w, h: hh };
     const svg = s("svg", { viewBox: `${vb.x} ${vb.y} ${vb.w} ${vb.h}`, role: "img", "aria-label": `Relationship graph of ${N} names` });
     const setVB = () => svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
     const edgeEls = E.map((e) => {
@@ -631,7 +635,8 @@
       const r = 5 + (m.score / 100) * 6;
       const g = s("g", { class: "node", transform: `translate(${pos[i].x},${pos[i].y})`, tabindex: "0", role: "button", "aria-label": m.name },
         s("circle", { r, fill: VCOL[m.verdict] || "var(--weak)" }),
-        N <= 40 ? s("text", { x: r + 4, y: 3.5 }, m.name.length > 34 ? `${m.name.slice(0, 32)}…` : m.name) : null);
+        N <= 40 ? s("text", pos[i].x < cx ? { x: -(r + 5), y: 3.5, "text-anchor": "end" } : { x: r + 5, y: 3.5 },
+          m.name.length > 34 ? `${m.name.slice(0, 32)}…` : m.name) : null);
       const act = () => { select(g.firstChild); onNode(m); for (const [k, ln] of edgeEls.entries()) ln.setAttribute("stroke-opacity", E[k].a === m.name || E[k].b === m.name ? 1 : 0.15); };
       g.addEventListener("click", (ev) => { ev.stopPropagation(); act(); });
       g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
