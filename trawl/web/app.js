@@ -149,7 +149,7 @@
     const sec = SECTION_OF[path] ?? path;
     for (const a of document.querySelectorAll("#nav a")) a.classList.toggle("on", a.dataset.p === sec);
     const c = document.getElementById("crumbs");
-    c.replaceChildren(...(crumbs || []).flatMap((x, i) => [i ? " / " : null, i === crumbs.length - 1 ? h("b", {}, x) : x]));
+    c.replaceChildren(...(crumbs || []).flatMap((x, i) => [i ? " / " : null, i === crumbs.length - 1 ? h("b", {}, x) : x]).filter((x) => x !== null));
   }
 
   async function render() {
@@ -176,7 +176,7 @@
     const W = 760, H = height, padL = 30, padB = 18, padT = 6;
     const max = Math.max(1, ...data.map((d) => keys.reduce((a, k) => a + (d[k] || 0), 0)));
     const nice = niceMax(max);
-    const bw = (W - padL) / Math.max(1, data.length);
+    const bw = Math.min((W - padL) / Math.max(1, data.length), 34);   // few bars stay bars
     const y = (v) => H - padB - (v / nice) * (H - padB - padT);
     const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img" });
     for (const t of [0, nice / 2, nice]) {
