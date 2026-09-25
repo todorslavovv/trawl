@@ -1,0 +1,19 @@
+[Unit]
+Description=trawl web UI + read-only JSON API (localhost only)
+Documentation=file://%h/trawl/docs/OPERATIONS.md
+
+[Service]
+WorkingDirectory=%h/trawl
+ExecStart=/usr/bin/python3 -m trawl --config %h/trawl/deploy/deck.json serve --host 127.0.0.1 --port 8790
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# SQLite WAL readers need to write the -shm file next to the database
+ReadWritePaths=%h/trawl-data
+UMask=0077
+
+[Install]
+WantedBy=default.target

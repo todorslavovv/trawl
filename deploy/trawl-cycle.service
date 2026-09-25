@@ -1,0 +1,18 @@
+[Unit]
+Description=trawl collection cycle (crt.sh -> DNS re-check -> analysis -> snapshot)
+Documentation=file://%h/trawl/docs/OPERATIONS.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/trawl
+ExecStart=/usr/bin/python3 -m trawl --config %h/trawl/deploy/deck.json cycle
+Nice=10
+# crt.sh collection alone may use its full 3 h budget
+TimeoutStartSec=5h
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=%h/trawl-data
+UMask=0077

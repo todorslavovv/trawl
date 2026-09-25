@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Quick Tunnel (trycloudflare.com) -> trawl web on 127.0.0.1:8790
+Documentation=https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/
+After=trawl-web.service network-online.target
+Requires=trawl-web.service
+
+[Service]
+# Quick Tunnel for demonstration only - a new random hostname on every start.
+# --no-autoupdate: a service is not an interactive terminal, so cloudflared would
+# otherwise update itself and exit (this killed the old osint tunnel on 2026-09-25).
+ExecStart=%h/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
