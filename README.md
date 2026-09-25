@@ -30,7 +30,7 @@ serve ─► read-only JSON API + dark investigation UI on 127.0.0.1
 
 ## What it does
 
-1. **Collects** certificate records from crt.sh by keyword for 17 tracked brands.
+1. **Collects** unexpired-certificate records from crt.sh by keyword for 17 tracked brands.
    Every response is stored verbatim with its query, run, HTTP status, attempt count
    and SHA-256. Partial collection is normal and recorded: a failed, timed-out or
    abandoned query is never counted as "no results".

@@ -25,8 +25,10 @@ of common ownership.
 
 ## Pipeline
 
-1. **Collect** (`collect`). For each tracked keyword, query crt.sh with a prefix
-   pattern and a contains pattern (and a dotted fallback when needed). Classify every
+1. **Collect** (`collect`). For each tracked keyword, query crt.sh for **unexpired**
+   certificates with a prefix pattern and a contains pattern (and a dotted fallback
+   when needed); crt.sh caps full-history answers to their oldest rows, so current
+   certificates are what can be collected completely. Classify every
    outcome; detect abandoned and truncated scans; store every record verbatim; record
    per-keyword coverage and the run status. See [DATA_SOURCES](DATA_SOURCES.md).
 2. **Normalise.** Split each record's identities into names (dropping non-DNS
