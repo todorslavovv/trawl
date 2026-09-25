@@ -54,6 +54,12 @@ def test_scoring_doc_worked_examples_are_true(name, kw, expect_score, expect_ver
     assert f"| {expect_score} |" in line and expect_verdict in line
 
 
+def test_readme_names_the_current_rules_version():
+    text = (ROOT / "README.md").read_text()
+    mentioned = set(re.findall(r"rules (r\d+)", text))
+    assert mentioned == {rules.RULES_VERSION.split("-")[0]}, mentioned
+
+
 def test_correlation_doc_matches_config():
     text = (DOCS / "CORRELATION.md").read_text()
     for kind, spec in C.DEFAULTS["correlation"]["kinds"].items():

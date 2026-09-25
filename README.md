@@ -19,7 +19,7 @@ collect ─► source_records (verbatim, hashed, append-only) + per-query outcom
   ▼
 normalize ─► domains · certificates · cert_names             (deterministic index)
   ▼
-analyze ─► decisions + signals        (explainable scoring, rules r1)
+analyze ─► decisions + signals        (explainable scoring, rules r3)
         ─► indicators → relationships → campaign hypotheses   (corroborated correlation)
         ─► dataset SHA-256 + results SHA-256 + cut-offs       (provenance)
   ▼
