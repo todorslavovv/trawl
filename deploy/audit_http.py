@@ -55,6 +55,7 @@ for h, v in (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "DENY"),
     check(f"header {h}", r.getheader(h) == v, r.getheader(h))
 server = r.getheader("Server") or ""
 check("no software version disclosed in Server header", "Python" not in server and "/" not in server, server)
+check("cache policy set", bool(r.getheader("Cache-Control")), r.getheader("Cache-Control"))
 check("no CORS allow-origin", r.getheader("Access-Control-Allow-Origin") is None)
 check("page references no third-party origins",
       b"http://" not in body.replace(b"http://www.w3.org", b"") and b"https://" not in body)
@@ -62,12 +63,17 @@ check("page references no third-party origins",
 r, js = req("GET", "/app.js")
 check("app.js has no innerHTML/eval", b"innerHTML =" not in js and b"eval(" not in js, len(js))
 
+# "No exposure" means nothing outside the three public assets is ever returned. A
+# reverse proxy may reject dot-segments itself (400) or normalise them first
+# ("/api/../app.js" -> "/app.js"); both are fine as long as only public bytes come back.
+PUBLIC = {req("GET", p)[1] for p in ("/", "/app.js", "/app.css")}
 for path in ("/../trawl.db", "/%2e%2e/%2e%2e/etc/passwd", "/.env", "/.git/config", "/trawl.db",
              "/data/trawl.db", "/deploy/deck.json", "/trawl/db.py", "/web/", "/api/", "//etc/passwd",
              "/api/../app.js", "/server-status", "/debug", "/admin"):
     r, b = req("GET", path)
-    check(f"no exposure: {path}", r.status == 404 and b"root:" not in b and b"CREATE TABLE" not in b,
-          r.status)
+    ok = (r.status in (400, 404) or (r.status == 200 and b in PUBLIC)) \
+        and b"root:" not in b and b"CREATE TABLE" not in b and b"import " not in b
+    check(f"no exposure: {path}", ok, r.status)
 
 for m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE"):
     r, _ = req(m, "/api/meta", body=b"x=1")

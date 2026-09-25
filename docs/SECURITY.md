@@ -81,3 +81,23 @@ See the "Audit log" section below - it lists what was checked on the deployed sy
 how, and the result.
 
 ## Audit log
+
+**2026-09-26, deployed system (Steam Deck, trawl 2.1.0, rules r3)**
+
+| Check | How | Result |
+|---|---|---|
+| Listening ports | `ss -ltnp` on the Deck | only `127.0.0.1:8790` (trawl-web) and `127.0.0.1:20242` (cloudflared metrics) added; nothing on 0.0.0.0 |
+| Debug mode / stack traces | code review + forced 500 in tests | no debug mode exists; fixed `{"error":"internal error"}` body |
+| Secrets in frontend / env files | audit script, repo grep | none exist; `/.env`, `/.git/config`, `/data/trawl.db`, `/deploy/deck.json` → 404/400 |
+| Directory browsing / traversal | audit script, locally and through the tunnel | no filesystem mapping; Cloudflare rejects dot-segments (400) or normalises them to a public asset |
+| Methods | audit script | POST/PUT/DELETE/PATCH/OPTIONS/TRACE → 405 |
+| Input validation | audit script (SQL-like, XSS-like, oversize values) | 400 with a fixed message; oversize request line 414 |
+| Headers | audit script through the tunnel | CSP, nosniff, DENY, no-referrer present end to end; `Server: cloudflare` at the edge, `trawl` at the origin |
+| Sandboxing | `systemd-analyze --user security` | trawl-web exposure 4.5 ("OK"), from 9.0 before hardening |
+| Outbound reach | code review + test | collector: crt.sh (redirects refused) and the host resolver only; web process makes no outbound connections |
+| Suspect domains | code review | never fetched; DNS lookups only |
+| Reproducibility | `trawl verify` + `trawl replay` on the first production snapshot | both fingerprints match; replay `"reproduced": true` |
+
+Result: `deploy/audit_http.py` 39/39 against `http://127.0.0.1:8790` and 39/39 against the
+public Quick Tunnel URL. Not done: an authenticated scanner (e.g. ZAP) run, and egress
+firewalling at the OS level (systemd IP filtering is unavailable to user units here).
