@@ -8,12 +8,27 @@ ExecStart=/usr/bin/python3 -m trawl --config %h/trawl/deploy/deck.json serve --h
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+UMask=0077
+# Sandboxing (verified to start under the SteamOS user manager)
 NoNewPrivileges=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 # SQLite WAL readers need to write the -shm file next to the database
 ReadWritePaths=%h/trawl-data
-UMask=0077
 
 [Install]
 WantedBy=default.target

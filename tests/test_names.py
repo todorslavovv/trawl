@@ -30,6 +30,9 @@ def test_normalise_rejects_non_dns(raw):
     ("a.b.s3.amazonaws.com", "b.s3.amazonaws.com", "s3.amazonaws.com", "s3.amazonaws.com", ("a", "b")),
     ("pages.dev", "pages.dev", "dev", None, ("pages",)),
     ("econt.com", "econt.com", "com", None, ("econt",)),
+    ("fibank.com.kh", "fibank.com.kh", "com.kh", None, ("fibank",)),   # REGRESSION (live run)
+    ("mail.bulbank--unicredit.com.ua", "bulbank--unicredit.com.ua", "com.ua", None, ("mail", "bulbank--unicredit")),
+    ("x.dskbank-bg.co.ua", "dskbank-bg.co.ua", "co.ua", None, ("x", "dskbank-bg")),
 ])
 def test_parse_suffix_and_registrable(name, registrable, suffix, platform, labels):
     p = parse(name)
@@ -65,6 +68,7 @@ def test_segment_prefers_fewest_words():
 @pytest.mark.parametrize("a,b,expected", [
     ("tollpas", "tollpass", True), ("tollpsas", "tollpass", True), ("tolpass", "tollpass", True),
     ("tollpass", "tollpass", False), ("toolpas", "tollpass", False), ("fibamk", "fibank", True),
+    ("ibank", "fibank", False), ("xibank", "fibank", False),     # first character is never edited
 ])
 def test_damerau1(a, b, expected):
     assert damerau1(a, b) is expected

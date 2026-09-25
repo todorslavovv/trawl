@@ -11,8 +11,23 @@ Nice=10
 # crt.sh collection alone may use its full 3 h budget
 TimeoutStartSec=5h
 Environment=PYTHONUNBUFFERED=1
+UMask=0077
+# Sandboxing (verified to start under the SteamOS user manager)
 NoNewPrivileges=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 ReadWritePaths=%h/trawl-data
-UMask=0077

@@ -46,7 +46,12 @@ Stated plainly, so that nothing on the site or in a report is read as more than 
   context in the name. A campaign against them that uses no Bulgarian wording and no
   high-abuse exact-label squat is scored `weak` or `none` (false negative by design,
   traded for far fewer false positives).
-* The public suffix handling is a curated subset, not the full Public Suffix List.
+* Legitimate integrations, staging systems and SaaS tenants that carry a brand name
+  under someone else's domain (`bulbank.<vendor>-staging.app`, an Econt module on a
+  shared platform) can score `possible`/`likely`. Curated lists (`TENANT_HOSTS`,
+  `NAMESAKES`) cover the cases seen so far; others appear as leads to review.
+* The public suffix handling is a curated subset plus a generic ccTLD second-level rule
+  (`com.XX`, `co.XX`, ...), not the full Public Suffix List.
 * Components chain; the `chained` tier and density make this visible but do not split
   a component.
 * Rarity weights are relative to the flagged population of one analysis; below ~30

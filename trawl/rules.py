@@ -6,7 +6,7 @@ the ones that ran.
 """
 from __future__ import annotations
 
-RULES_VERSION = "r1-2026-09-26"
+RULES_VERSION = "r3-2026-09-26"
 
 # -- brands ---------------------------------------------------------------------
 # distinctive: a match is almost certainly about this brand.
@@ -50,10 +50,10 @@ BRANDS: dict[str, dict] = {
     "euslugi": {"label": "МВР e-services", "sector": "state", "ambiguous": False,
                 "phrases": [["euslugi"], ["e", "uslugi"], ["eusluga"]],
                 "query_keys": ["euslugi"], "official": ["mvr.bg", "egov.bg"]},
-    "tollpass": {"label": "TollPass", "sector": "state", "ambiguous": False,
+    "tollpass": {"label": "TollPass", "sector": "toll", "ambiguous": False,
                  "phrases": [["tollpass"], ["toll", "pass"]],
                  "query_keys": ["tollpass"], "official": ["tollpass.bg", "bgtoll.bg"]},
-    "vinetki": {"label": "e-vignette (винетки)", "sector": "state", "ambiguous": True,
+    "vinetki": {"label": "e-vignette (винетки)", "sector": "toll", "ambiguous": True,
                 "phrases": [["vinetka"], ["vinetki"], ["evinetka"], ["evinetki"]],
                 "query_keys": ["vinetk"], "official": ["vinetki.bg", "bgtoll.bg"]},
     "bulbank": {"label": "UniCredit Bulbank", "sector": "bank", "ambiguous": False,
@@ -62,7 +62,7 @@ BRANDS: dict[str, dict] = {
                 "official": ["unicreditbulbank.bg", "bulbank.bg", "bulbankonline.bg"]},
     "dskbank": {"label": "DSK Bank", "sector": "bank", "ambiguous": False,
                 "phrases": [["dskbank"], ["dsk", "bank"], ["dskdirect"]],
-                "query_keys": ["dskbank"], "official": ["dskbank.bg", "dskdirect.bg"]},
+                "query_keys": ["dskbank"], "official": ["dskbank.bg", "dsk.bg", "dskdirect.bg"]},
     "fibank": {"label": "Fibank", "sector": "bank", "ambiguous": False,
                "phrases": [["fibank"]],
                "query_keys": ["fibank"], "official": ["fibank.bg"]},
@@ -86,7 +86,28 @@ NAMESAKES: dict[str, str] = {
     "dpd.co.uk": "DPD United Kingdom",
     "mvr.gov.mk": "Ministry of Interior of North Macedonia",
     "paysera.lv": "Paysera Latvia",
+    "cas.ms": "Microsoft Defender for Cloud Apps session proxy - rewrites real sites' host names",
+    "mcas.ms": "Microsoft Defender for Cloud Apps session proxy - rewrites real sites' host names",
+    "admin-mcas.ms": "Microsoft Defender for Cloud Apps admin proxy - rewrites real sites' host names",
+    "dslbank.de": "DSL Bank (Germany) - one letter from DSK Bank, unrelated",
 }
+
+# SaaS platforms that give each customer a subdomain (fibank-al.3cx.at, x.floqast.ca).
+# A bank's name there is usually the bank's own tenant, so it is not treated as a
+# sensitive brand hosted by a stranger. Curated from the first live run; not exhaustive.
+TENANT_HOSTS = frozenset({
+    "3cx.at", "3cx.eu", "3cx.net", "3cx.us", "3cx.uk", "floqast.ca", "floqast.app",
+    "service-now.com", "okta.com", "oktapreview.com", "okta-emea.com", "sharepoint.com",
+    "zendesk.com", "atlassian.net", "freshdesk.com", "force.com", "salesforce.com",
+    "my.site.com", "workday.com", "myworkday.com", "successfactors.com", "sapsf.com",
+    "webex.com", "zoom.us", "slack.com", "box.com", "egnyte.com", "outsystemscloud.com",
+    "phos.dev",
+})
+
+# Sectors where a brand name hosted under someone else's domain is almost never
+# legitimate. Couriers are excluded (shops embed them routinely: econt.shopname.bg), and
+# so is toll/vignette ("toll": many licensed resellers, e.g. vinetki.<reseller>.bg).
+SENSITIVE_SECTORS = frozenset({"bank", "state", "payments"})
 
 # -- context --------------------------------------------------------------------
 BG_MARKERS = frozenset({"bg", "bgr", "bulgaria", "bulgarian", "bulgar", "balgaria",
@@ -101,6 +122,20 @@ BG_LURES = frozenset({
     "izprati", "poluchi", "poluchavane", "adres", "danni", "vazstanovi",
     "obnovi", "potvardi", "smetka", "karta",
 })
+
+# Transliterations that are also ordinary words in German, Polish, Serbian and other
+# languages ("paket", "kurier", "karta"...). They still count as lure wording, but NOT
+# as evidence that a name targets Bulgaria. REGRESSION (live run 2026-09-26):
+# dpdwebpaket.de and kurier-dpd-piekaryslaskie.pl were flagged as Bulgarian DPD phishing.
+SHARED_LURES = frozenset({"paket", "paketa", "paketi", "kurier", "kurieri", "karta",
+                          "adres", "mito", "taksi", "danni"})
+BG_CONTEXT_LURES = BG_LURES - SHARED_LURES
+
+# Two-letter TLDs that are used as generic TLDs (cheap or vanity), so they say nothing
+# about the country a name targets. Any other ccTLD except .bg is "foreign".
+GENERIC_CCTLDS = frozenset({"cc", "co", "io", "me", "tv", "ws", "la", "ai", "to", "gg",
+                            "ly", "fm", "am", "ga", "ml", "tk", "cf", "gq", "pw", "su",
+                            "sh", "ac", "im", "eu", "nu", "vg", "cx", "st", "sx", "lc"})
 
 # English lure wording seen in delivery, toll and banking lures.
 EN_LURES = frozenset({
@@ -137,7 +172,7 @@ TLD_HIGH = frozenset({
     "makeup", "christmas", "tk", "ml", "ga", "cf", "gq", "cc", "pw", "su", "buzz",
     "xyz", "win", "bid", "loan", "work", "lol", "pics", "mom", "zip", "mov", "ink",
     "wang", "rocks", "fit", "vip", "support", "help", "shop", "online", "site",
-    "store", "live", "delivery", "express",
+    "store", "live", "delivery", "express", "bar", "homes",
 })
 TLD_MODERATE = frozenset({
     "life", "one", "digital", "space", "website", "fun", "info", "biz", "today",
@@ -152,9 +187,9 @@ RULES: dict[str, dict] = {
     "brand":                {"points": 40, "corroborating": False,
                              "text": "Distinctive brand token or phrase"},
     "brand_contextual":     {"points": 35, "corroborating": False,
-                             "text": "Ambiguous brand token with Bulgarian context in the same name"},
+                             "text": "Ambiguous brand token with Bulgarian context in the same name (.bg, a marker such as 'bg', or Bulgarian-only lure wording; not under a foreign ccTLD unless a marker is present)"},
     "brand_lookalike":      {"points": 30, "corroborating": False,
-                             "text": "Look-alike of a distinctive brand (one edit, or 1-3 extra letters)"},
+                             "text": "Look-alike of a distinctive brand (one edit, or the brand plus known words and at most 2 stray letters - 1 for 5-letter brands)"},
     "brand_exact_squat":    {"points": 25, "corroborating": False,
                              "text": "Ambiguous brand as the entire registrable label on a high-abuse TLD"},
     "tld_high":             {"points": 20, "corroborating": True,
@@ -170,7 +205,11 @@ RULES: dict[str, dict] = {
     "multi_brand_certificate": {"points": 15, "corroborating": True,
                              "text": "A certificate listing this name also lists a name impersonating a different brand"},
     "brand_subdomain":      {"points": 10, "corroborating": False,
-                             "text": "Brand appears only in a subdomain of an unrelated registrable domain"},
+                             "text": "Courier brand appears only in a subdomain of an unrelated registrable domain"},
+    "sensitive_brand_subdomain": {"points": 15, "corroborating": True,
+                             "text": "Bank, state or payments brand appears only in a subdomain of an unrelated registrable domain"},
+    "foreign_cctld":        {"points": 15, "corroborating": True,
+                             "text": "Distinctive Bulgarian brand combined with other words in a registrable domain under a foreign country-code TLD"},
     "generated_label":      {"points": 10, "corroborating": False,
                              "text": "Machine-generated label (hex/digit run, or random letters between brand and TLD)"},
     "wildcard_certificate": {"points": 10, "corroborating": False,

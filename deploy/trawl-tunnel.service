@@ -12,6 +12,12 @@ ExecStart=%h/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictNamespaces=yes
+LockPersonality=yes
 
 [Install]
 WantedBy=default.target

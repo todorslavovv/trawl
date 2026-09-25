@@ -23,12 +23,12 @@ _IPV4ISH = re.compile(r"^[0-9.]+$")
 
 # Multi-label public suffixes that matter for this corpus. Not the full Public
 # Suffix List.
-# ponytail: a curated subset. Upgrade path: vendor publicsuffix.org's list and load
-# it here; registrable() is the only consumer.
+# ponytail: a curated subset plus the ccTLD second-level rule below. Upgrade path:
+# vendor publicsuffix.org's list and load it here; parse() is the only consumer.
 PUBLIC_SUFFIXES = frozenset({
     "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "co.nz", "com.br",
     "com.tr", "co.za", "co.jp", "com.cn", "com.ua", "co.in", "com.mx", "com.gr",
-    "com.cy", "com.ro", "com.pl", "net.pl", "org.pl", "com.ru", "com.es", "co.il",
+    "com.cy", "co.ua", "com.ro", "com.pl", "net.pl", "org.pl", "com.ru", "com.es", "co.il",
     "com.sg", "com.hk", "com.tw", "eu.org", "co.com", "us.com", "uk.com", "eu.com",
     "de.com", "ru.com", "com.de", "com.se", "za.com",
 })
@@ -49,7 +49,11 @@ PLATFORM_SUFFIXES = frozenset({
     "serveo.net", "loca.lt", "duckdns.org", "ddns.net", "no-ip.org", "hopto.org",
     "zapto.org", "servehttp.com", "firebaseio.com", "amplifyapp.com",
     "s3.amazonaws.com", "storage.googleapis.com", "windows.net", "ipfs.dweb.link",
-    "run.app", "b-cdn.net", "myshopify.com", "jimdosite.com", "yolasite.com",
+    "run.app", "hosted.app", "b-cdn.net", "myshopify.com", "jimdosite.com", "yolasite.com",
+    # dynamic DNS and shared hosting seen carrying brand names in the first live run
+    "sytes.net", "myftp.biz", "myftp.org", "serveftp.com", "redirectme.net",
+    "bounceme.net", "ddnsking.com", "3utilities.com", "gotdns.ch", "dynu.net",
+    "freeddns.org", "ferozo.com", "webhop.me", "servebeer.com", "servequake.com",
 })
 
 _SUFFIXES = PUBLIC_SUFFIXES | PLATFORM_SUFFIXES
@@ -76,6 +80,13 @@ class Parsed:
     labels: tuple          # labels left of the suffix, left to right
 
 
+# Second-level labels that ccTLD registries commonly sell under (com.kh, co.ua,
+# net.br ...). Treated as public suffixes under ANY two-letter TLD - an approximation of
+# the Public Suffix List that is right for the cases seen in this corpus.
+_CC_SECOND_LEVEL = frozenset({"com", "co", "net", "org", "gov", "edu", "ac", "or", "ne",
+                              "go", "mil", "gob", "nic", "biz", "info"})
+
+
 @lru_cache(maxsize=65536)
 def parse(name: str) -> Parsed:
     parts = name.split(".")
@@ -85,6 +96,9 @@ def parse(name: str) -> Parsed:
         if cand in _SUFFIXES:
             suffix = cand
             break
+    else:
+        if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _CC_SECOND_LEVEL:
+            suffix = ".".join(parts[-2:])
     n_suffix = suffix.count(".") + 1
     labels = tuple(parts[:-n_suffix])
     registrable = ".".join(parts[-(n_suffix + 1):]) if labels else name
@@ -136,8 +150,10 @@ def segment(token: str, vocab: frozenset, max_word: int) -> list[str] | None:
 
 
 def damerau1(a: str, b: str) -> bool:
-    """True if a and b differ by exactly one edit (insert, delete, substitute, swap)."""
-    if a == b or abs(len(a) - len(b)) > 1:
+    """True if a and b differ by exactly one edit (insert, delete, substitute, swap),
+    not touching the first character: typosquats keep the start of the brand, and
+    first-letter edits turn brands into generic words ("fibank" -> "ibank")."""
+    if a == b or abs(len(a) - len(b)) > 1 or not a or not b or a[0] != b[0]:
         return False
     if len(a) == len(b):
         diff = [i for i in range(len(a)) if a[i] != b[i]]

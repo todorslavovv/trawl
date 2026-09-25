@@ -68,6 +68,22 @@ def _words_for(tok: str) -> tuple:
     return tuple(seg) if seg else (tok,)
 
 
+def _stray_letters(rest: str) -> int:
+    """Fewest letters of `rest` NOT covered by vocabulary words ("aabg" -> 2: a, a + bg)."""
+    n = len(rest)
+    best = [0] + [n + 1] * n
+    for i in range(n):
+        if best[i] > n:
+            continue
+        best[i + 1] = min(best[i + 1], best[i] + 1)             # one stray letter
+        for j in range(i + 2, min(n, i + R.MAX_WORD) + 1):
+            w = rest[i:j]
+            # 2-letter fillers ("en", "eu") would pad ordinary words into look-alikes
+            if w in R.VOCAB and (len(w) >= 3 or w in R.BG_MARKERS):
+                best[j] = min(best[j], best[i])
+    return best[n]
+
+
 def _find_phrase(words: tuple, phrase: list) -> bool:
     k = len(phrase)
     return any(list(words[i:i + k]) == phrase for i in range(len(words) - k + 1))
@@ -79,7 +95,9 @@ def view(name: str) -> NameView:
     raw = tuple(tuple(tokens(lbl)) for lbl in p.labels)
     words = tuple(tuple(w for t in toks for w in _words_for(t)) for toks in raw)
     flat = {w for ws in words for w in ws}
-    bg_ctx = p.tld == "bg" or bool(flat & R.BG_MARKERS) or bool(flat & R.BG_LURES)
+    foreign_cc = len(p.tld) == 2 and p.tld != "bg" and p.tld not in R.GENERIC_CCTLDS
+    bg_ctx = (p.tld == "bg" or bool(flat & R.BG_MARKERS)
+              or (not foreign_cc and bool(flat & R.BG_CONTEXT_LURES)))
 
     found: dict = {}
     ignored: list = []
@@ -109,8 +127,12 @@ def view(name: str) -> NameView:
             for w, brand in _SINGLE_WORD_DISTINCTIVE:
                 if brand in found:
                     continue
-                extra = len(t) - len(w)
-                if (t.startswith(w) and 1 <= extra <= 3) or (len(w) >= 6 and damerau1(t, w)):
+                # brand + known words + at most 2 stray letters (bgpostkd, bgpostaabg),
+                # or one edit away for longer brands (tolpass)
+                # 5-letter brands prefix many ordinary words (econtact, econteudo): 1 stray
+                strays = 1 if len(w) < 6 else 2
+                if (t.startswith(w) and len(t) > len(w) and _stray_letters(t[len(w):]) <= strays) \
+                        or (len(w) >= 6 and damerau1(t, w)):
                     found[brand] = (brand, "brand_lookalike", li, f"'{t}' looks like '{w}'")
     brands = tuple(sorted(found.values()))
     ign = tuple(sorted(set(ignored) - {i for i in ignored if i[0] in found}))
@@ -175,7 +197,20 @@ def score(facts: Facts, as_of: str) -> Decision:
     reg_idx = len(v.words) - 1
     sub_only = own and all(b[2] < reg_idx for b in v.brands) and reg_idx >= 1
     if sub_only:
-        sig.append(_sig("brand_subdomain", f"brand in subdomain of {p.registrable}"))
+        sensitive = sorted(b for b in own if R.BRANDS[b]["sector"] in R.SENSITIVE_SECTORS)
+        if sensitive and p.registrable not in R.TENANT_HOSTS:
+            sig.append(_sig("sensitive_brand_subdomain",
+                            f"{', '.join(R.BRANDS[b]['label'] for b in sensitive)} in a subdomain of {p.registrable}"))
+        else:
+            sig.append(_sig("brand_subdomain", f"brand in subdomain of {p.registrable}"))
+
+    foreign_cc = len(p.tld) == 2 and p.tld != "bg" and p.tld not in R.GENERIC_CCTLDS
+    in_reg = sorted(b[0] for b in v.brands if b[2] == reg_idx and b[1] == "brand")
+    if foreign_cc and in_reg and not p.platform:
+        brand_words = {w for b in in_reg for ph in R.BRANDS[b]["phrases"] for w in ph}
+        if any(w not in brand_words for w in v.words[reg_idx]):
+            sig.append(_sig("foreign_cctld", f"{', '.join(in_reg)} with other words in "
+                                             f"{p.registrable}, a foreign country-code domain"))
 
     gen = [t for toks in v.raw_tokens for t in toks if _is_hex(t) or _DIGITS.match(t)]
     if sub_only:

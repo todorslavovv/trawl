@@ -1,6 +1,6 @@
 # Scoring
 
-Rule set **`r1-2026-09-26`** (`trawl/rules.py`, recorded in every analysis). This
+Rule set **`r3-2026-09-26`** (`trawl/rules.py`, recorded in every analysis). This
 document is checked against the code by `tests/test_docs_and_claims.py`.
 
 ## Principle
@@ -33,21 +33,32 @@ This is what keeps the beta tools' false positives out: `econtainer` is not Econ
 **Distinctive vs ambiguous brands.** Distinctive brands count on sight. Ambiguous
 brands (a common word, or the brand exists abroad) count only with **Bulgarian
 context** in the same name - the `.bg` TLD, a marker such as `bg`/`bulgaria`, or
-Bulgarian lure wording - or as an **exact-label squat** on a high-abuse TLD
+Bulgarian-only lure wording - or as an **exact-label squat** on a high-abuse TLD
 (`vinetka.top`). Otherwise they are recorded as `brand_ignored` (0 points) so that a
 non-detection is explainable too.
 
+Two refinements came from the first live run (rules r2): transliterations that are
+also ordinary words elsewhere (`paket`, `kurier`, `karta`, `adres`, `mito`, `taksi`,
+`danni` - German, Polish, Serbian...) still count as lure wording but are **not**
+Bulgarian context; and under a foreign country-code TLD (`.de`, `.pl`, `.com.ua` ...)
+only an explicit marker such as `bg` gives context. Two-letter TLDs used generically
+(`.cc`, `.co`, `.io`, `.me`, `.tk`, ...) are not treated as foreign.
+
 **Look-alikes** of distinctive single-word brands of 5+ letters: the brand followed by
-1-3 extra letters (`tollpasss`), or, for brands of 6+ letters, one edit away
-(`tolpass`). Only tokens that did not segment are considered.
+known words and at most 2 stray letters (`tollpasss`, `bgpostkd`, `bgpostaabg` = brand +
+`a`,`a` + `bg`), or, for brands of 6+ letters, one edit away that keeps the first letter
+(`tolpass`; not `ibank`, a generic word one deletion from `fibank`). Only tokens
+that did not segment are considered. Five-letter brands (`econt`) allow one stray
+letter, because they prefix many ordinary words: `econtact`, `econtato`, `econteudo`,
+`econtrek` and `econtry` do not qualify.
 
 ## Rules
 
 | Rule | Points | Corroborating | Meaning |
 |---|---:|:---:|---|
 | `brand` | 40 | – | Distinctive brand token or phrase |
-| `brand_contextual` | 35 | – | Ambiguous brand token with Bulgarian context in the same name |
-| `brand_lookalike` | 30 | – | Look-alike of a distinctive brand (one edit, or 1-3 extra letters) |
+| `brand_contextual` | 35 | – | Ambiguous brand token with Bulgarian context in the same name (.bg, a marker such as 'bg', or Bulgarian-only lure wording; not under a foreign ccTLD unless a marker is present) |
+| `brand_lookalike` | 30 | – | Look-alike of a distinctive brand (one edit, or the brand plus known words and at most 2 stray letters - 1 for 5-letter brands) |
 | `brand_exact_squat` | 25 | – | Ambiguous brand as the entire registrable label on a high-abuse TLD |
 | `tld_high` | 20 | yes | High-abuse top-level domain |
 | `tld_moderate` | 10 | – | Moderate-abuse top-level domain |
@@ -55,7 +66,9 @@ non-detection is explainable too.
 | `lure_bg` | 20 | yes | Bulgarian-language lure wording (whole words only) |
 | `lure_en` | 15 | yes | English lure wording (whole words only) |
 | `multi_brand_certificate` | 15 | yes | A certificate listing this name also lists a name impersonating a different brand |
-| `brand_subdomain` | 10 | – | Brand appears only in a subdomain of an unrelated registrable domain |
+| `brand_subdomain` | 10 | – | Courier brand appears only in a subdomain of an unrelated registrable domain |
+| `sensitive_brand_subdomain` | 15 | yes | Bank, state or payments brand appears only in a subdomain of an unrelated registrable domain |
+| `foreign_cctld` | 15 | yes | Distinctive Bulgarian brand combined with other words in a registrable domain under a foreign country-code TLD |
 | `generated_label` | 10 | – | Machine-generated label (hex/digit run, or random letters between brand and TLD) |
 | `wildcard_certificate` | 10 | – | Wildcard certificate on a high/moderate-abuse TLD (hides subdomains from CT) |
 | `recent_issuance` | 5 | – | First certificate issued within 7 days of the analysis time (triage priority) |
@@ -95,10 +108,10 @@ other circularly; they are shown alongside it.
 | Sameday | courier | ambiguous | `sameday` | `sameday` | sameday.bg |
 | Ministry of Interior (МВР) | state | ambiguous | `mvr` | `mvr` | mvr.bg |
 | МВР e-services | state | distinctive | `euslugi`, `e-uslugi`, `eusluga` | `euslugi` | mvr.bg, egov.bg |
-| TollPass | state | distinctive | `tollpass`, `toll-pass` | `tollpass` | tollpass.bg, bgtoll.bg |
-| e-vignette (винетки) | state | ambiguous | `vinetka`, `vinetki`, `evinetka`, `evinetki` | `vinetk` | vinetki.bg, bgtoll.bg |
+| TollPass | toll | distinctive | `tollpass`, `toll-pass` | `tollpass` | tollpass.bg, bgtoll.bg |
+| e-vignette (винетки) | toll | ambiguous | `vinetka`, `vinetki`, `evinetka`, `evinetki` | `vinetk` | vinetki.bg, bgtoll.bg |
 | UniCredit Bulbank | bank | distinctive | `bulbank`, `unicreditbulbank`, `unicredit-bulbank` | `bulbank` | unicreditbulbank.bg, bulbank.bg, bulbankonline.bg |
-| DSK Bank | bank | distinctive | `dskbank`, `dsk-bank`, `dskdirect` | `dskbank` | dskbank.bg, dskdirect.bg |
+| DSK Bank | bank | distinctive | `dskbank`, `dsk-bank`, `dskdirect` | `dskbank` | dskbank.bg, dsk.bg, dskdirect.bg |
 | Fibank | bank | distinctive | `fibank` | `fibank` | fibank.bg |
 | Postbank (Bulgaria) | bank | ambiguous | `postbank` | `postbank` | postbank.bg |
 | Paysera | payments | ambiguous | `paysera` | `paysera` | paysera.bg, paysera.com, paysera.lt |
@@ -133,4 +146,30 @@ Every false positive found by running the beta tools on live data is a test in
 `tests/test_scoring.py`: `econtainer-gar.ml`, `econtrack.co.uk`,
 `speedypaydayloan.co.uk`, `mvr-coin.ga`, `postbank-datenverifizierung.xyz`,
 `vinetki-dlya-vypusknikov.tk`, `pocztoweuslugi278995449.cfd`,
-`girowillkommenspaket.postbank.de`, `www.paysera.bg`, and others.
+`girowillkommenspaket.postbank.de`, `www.paysera.bg`, and others. The first live run
+of v2 added `*.dpdwebpaket.de`, `kurier-dpd-piekaryslaskie.pl` (foreign DPD, context
+words that are not Bulgarian) and `econtrek.win` / `econtact.cf` (look-alike too loose).
+
+Rules r3 (same review) added two corroborating signals for patterns that stayed `weak`
+in r2: a **bank, state or payments brand hosted in a subdomain of an unrelated domain**
+(`dskbank.planetanuestro.com`, `bulbankonline.<compromised-site>.com`) - couriers and
+toll/vignette brands are excluded because shops and licensed resellers embed them
+legitimately (`econt.simplamarket.net`, `vinetki.<reseller>.bg`); and a
+**distinctive brand with other words under a foreign ccTLD** (`bulbank-online-ing.com.ua`,
+`dskbank-bg.co.ua`) - an exact brand label abroad (`fibank.gr`, `econt.hu`) is left
+`weak`, as a likely namesake. The foreign-ccTLD signal needs the brand and the extra
+words in the registrable label itself and an exact brand match (`econt.bayern.ro`,
+`fibanko.es`, `econta.mx` do not qualify). SaaS
+platforms that give customers subdomains (`3cx.at`, `floqast.ca`, `service-now.com`,
+... - `rules.TENANT_HOSTS`) are exempt from the sensitive-subdomain signal, because a
+bank's name there is usually its own tenant. Dynamic-DNS suffixes (`sytes.net`, `myftp.biz`, ...) were
+added as shared platforms, `.bar` and `.homes` as high-abuse TLDs, and Microsoft's
+`cas.ms` / `admin-mcas.ms` proxies and Germany's DSL Bank (`dslbank.de`) as namesakes.
+
+Version history: r1 ran once, on the pre-release live collection (archived); r2 and r3
+are the refinements from reviewing that data; r3 is what the deployment runs.
+
+Known remaining false-positive class: legitimate integrations and development builds
+that carry a brand on a shared platform (for example an Econt delivery module hosted
+on `hosted.app`) score `likely`, because "brand on a shared platform" is exactly the
+pattern phishing uses. They are leads to review, which is what the verdict means.

@@ -32,6 +32,19 @@ def verdict(name, **kw):
     ("tolpass-pay.cfd", "likely"),            # look-alike: one edit, plus lure
     ("vinetka.top", "possible"),              # exact-label squat of an ambiguous brand
     ("speedy.top", "possible"),
+    ("dpd-pratka.top", "likely"),             # Bulgarian-only context word still works
+    ("bgpostkd.top", "possible"),             # kit: brand + 2 random letters
+    ("bgpostaabg.fit", "possible"),           # kit seen live: brand + letter(s) + bg
+    ("bgpostwbg.work", "possible"),
+    # r3, from the live-data review: bank/state brands hosted under unrelated domains,
+    # and distinctive brands with extra words under foreign ccTLDs
+    ("bulbankonline.orangecountyraingutters.com", "possible"),
+    ("dskbank.planetanuestro.com", "possible"),
+    ("fibank.dbs.moneyp.com.br", "possible"),
+    ("bulbank-online-ing.com.ua", "possible"),
+    ("dskbank-bg.co.ua", "possible"),
+    ("bulbank-hostveri.myftp.biz", "likely"),          # dynamic DNS is a shared platform
+    ("bgpost.bar", "likely"),
 ])
 def test_true_positives(name, expected):
     assert verdict(name).verdict == expected, verdict(name)
@@ -56,6 +69,19 @@ def test_lead_without_brand():
     "boxnow.aeginapetmarket.gr",           # Greek BOX NOW integration
     "mvrf.tk",                             # three letters are not the ministry
     "dpd-tracking.de",                     # DPD abroad, no Bulgarian context
+    "www.syslog.dpdwebpaket.de",           # REGRESSION (v2 live run): German "paket"
+    "kurier-dpd-piekaryslaskie.pl",        # REGRESSION (v2 live run): Polish "kurier"
+    "econtrek.win",                        # REGRESSION (v2 live run): look-alike too loose
+    "econtact.cf", "econtato.tk",          # REGRESSION (v2 live run): e-contact / e-contato
+    "econteudo.tk",                        # REGRESSION (v2 live run): Portuguese e-conteudo
+    "econtent.am",                         # REGRESSION (v2 live run): e-content
+    "fibank.com.kh", "fibank.gr", "econt.hu",   # exact brand under a foreign ccTLD: namesake-like
+    "econt.simplamarket.net",              # courier embedded by a shop: integration pattern
+    "ibank.uralexpress.ru",                # REGRESSION (r3 review): first-letter edit of fibank
+    "econt.bayern.ro",                     # REGRESSION (r3 review): brand only in a foreign subdomain
+    "fibank.floqast.ca", "fibank-al.3cx.at",   # SaaS customer tenants
+    "fibanko.es", "econta.mx", "econti.cz",   # REGRESSION (r3 review): look-alike abroad is not "brand + words"
+    "vinetki.aib.bg",                      # licensed vignette reseller pattern
 ])
 def test_false_positives_stay_unflagged(name):
     d = verdict(name)
@@ -66,6 +92,10 @@ def test_false_positives_stay_unflagged(name):
 @pytest.mark.parametrize("name", [
     "girowillkommenspaket.postbank.de",    # REGRESSION (certwatch): namesake + "paket"
     "www.paysera.bg",                      # REGRESSION (certwatch): official, "pay" inside
+    "fibank.bg.admin-us3.cas.ms",          # Microsoft Defender for Cloud Apps proxy
+    "dskbank.bg.admin-mcas.ms",
+    "dskbank.dsk.bg",                      # DSK Bank's own domain
+    "kredit.dslbank.de",                   # namesake: DSL Bank (Germany)
     "econt.com", "www.econt.bg", "e-uslugi.mvr.bg", "speedy.bg", "tollpass.bg",
     "mvr.gov.mk",
 ])
