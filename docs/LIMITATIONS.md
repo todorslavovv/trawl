@@ -20,6 +20,11 @@ Stated plainly, so that nothing on the site or in a report is read as more than 
   incomplete coverage. On the first live run most `%keyword%` scans were abandoned, so
   coverage for those keywords rests on the prefix query (`keyword%`) - names where the
   keyword is not at the start of the name (`my-econt-pay.top`) are then missed.
+* **Only unexpired certificates are collected**, because crt.sh caps large full-history
+  answers to their oldest rows (measured: `econt%` stopped at 2018). A certificate that
+  was issued and expired between two collection runs - rare with 6-hourly runs and
+  90-day certificates - is not seen. History accumulates from the first run onwards.
+* **crt.sh lags the CT logs**, often by days, so "first collected" trails issuance.
 * **crt.sh lists only matching identities**, so the certificate view shows the names
   we queried for, not necessarily every name on a certificate.
 * **DNS from one vantage point.** Answers come from the host's resolver at one moment;

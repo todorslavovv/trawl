@@ -15,9 +15,12 @@ before it is used.
 27 GB/day (measured in the beta at ~5.5 kB per entry). crt.sh has already indexed the
 same logs, so a keyword query costs bandwidth proportional to matches.
 
-**How it is queried.** `GET https://crt.sh/?q=<pattern>&output=json` - the only HTTP
-destination in the code (`trawl/sources/crtsh.py`). For each keyword in
-`rules.query_keywords()`:
+**How it is queried.** `GET https://crt.sh/?q=<pattern>&output=json&exclude=expired` -
+the only HTTP destination in the code (`trawl/sources/crtsh.py`). Only certificates
+that have **not expired** are requested (`collection.exclude_expired`, default on): a
+live phishing site needs a valid certificate, and full-history answers are capped by
+crt.sh (see below). Names are kept forever once collected, so history accumulates from
+the first sighting. For each keyword in `rules.query_keywords()`:
 
 | Role | Pattern | Notes |
 |---|---|---|
@@ -41,6 +44,7 @@ common_name`). Organisation names and e-mail addresses in identities are discard
 | HTTP 404 for a valid search that succeeds minutes later; instant 502s | retried like any 5xx; only 400/414 are not retried; a non-200 answer is never read as "no results" |
 | HTTP 200 with `[]` when a scan is abandoned | an empty `%k%` or `%.k%` answer is accepted only if `k%` was verifiably empty; otherwise `abandoned` |
 | HTTP 200 with a truncated list | a `%k%` answer smaller than `k%` (its own subset) is `abandoned`; its records are still kept |
+| **Large answers capped to the oldest rows** (measured 2026-09-26 without `exclude=expired`: `econt%` returned 5,103 records whose newest certificate dated from 2018; `speedy%` stopped at 2016, `dpd%` at 2017, `mvr%` at 2018) | query unexpired certificates only (`econt%` then returned 4,336 records spanning 2025-08-27 to 2026-09-11); an answer of ≥ `truncation_min_records` (1,000) whose newest certificate is older than `truncation_stale_days` (45) is recorded as `abandoned` (truncated), records kept |
 | HTML error page with status 200 | `parse_error` |
 | 429 / Retry-After | honoured, capped at `backoff_max_s` |
 | Very large answers | refused above `max_response_mb` (`too_large`) |
@@ -49,6 +53,10 @@ Politeness: at least `pace_s` (6 s) between any two requests, exponential backof
 jitter, a run-time budget (`max_run_minutes`) after which remaining queries are
 recorded as `skipped`, and a minimum interval between runs enforced in code. No API
 key or account is used. The User-Agent identifies the tool.
+
+crt.sh also lags the CT logs: its newest certificates are often days to weeks old.
+That delay is between issuance and our first sighting, and it shows in the
+difference between a name's first certificate date and its "collected" date.
 
 **Provenance stored per response:** run id, keyword, role, pattern, start/finish time,
 duration, outcome, HTTP status, attempts, bytes, response SHA-256, record counts

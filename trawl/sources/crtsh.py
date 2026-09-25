@@ -44,12 +44,14 @@ SOURCE = {
     "id": "crtsh",
     "name": "crt.sh Certificate Transparency search",
     "kind": "certificate-transparency",
-    "endpoint": BASE_URL + "?q=<pattern>&output=json",
+    "endpoint": BASE_URL + "?q=<pattern>&output=json&exclude=expired",
     "description": (
         "Public search index over Certificate Transparency logs, operated by Sectigo. "
-        "Queried by keyword with SQL LIKE patterns. Each JSON record describes one "
-        "logged certificate (precertificate and final certificate are separate "
-        "records) and lists only the identities on it that matched the query."),
+        "Queried by keyword with SQL LIKE patterns, for certificates that have not "
+        "expired. Each JSON record describes one logged certificate (precertificate and "
+        "final certificate are separate records) and lists only the identities on it "
+        "that matched the query. Large answers are capped by crt.sh to the oldest rows; "
+        "such answers are detected and recorded as truncated."),
     "provenance": (
         "Every response is stored verbatim per record (canonical JSON + SHA-256), "
         "with the run, query, pattern, HTTP status, attempt count, byte count and "
@@ -126,8 +128,11 @@ class Client:
         self._sleep(delay)
 
     # -- one query -------------------------------------------------------
-    def search(self, pattern: str) -> QueryResult:
-        url = BASE_URL + "?" + urllib.parse.urlencode({"q": pattern, "output": "json"})
+    def search(self, pattern: str, exclude_expired: bool = True) -> QueryResult:
+        params = {"q": pattern, "output": "json"}
+        if exclude_expired:
+            params["exclude"] = "expired"
+        url = BASE_URL + "?" + urllib.parse.urlencode(params)
         t0 = self._clock()
         res = QueryResult(outcome="network_error")
         for attempt in range(self.max_attempts):

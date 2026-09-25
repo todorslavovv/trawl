@@ -3,7 +3,7 @@
 ## Requirements
 
 Python 3.11+ (standard library only). Tested on Python 3.12 (development PC) and 3.13
-(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite.
+(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.1.0.
 
 ## Configuration
 
@@ -21,6 +21,8 @@ Defaults are in `trawl/config.py`. Override any subset with a JSON file passed a
 | `collection.pace_s` | 6 | minimum gap between any two crt.sh requests (min 1) |
 | `collection.max_run_minutes` | 180 | remaining queries are recorded as `skipped` |
 | `collection.max_response_mb` | 256 | larger answers are refused |
+| `collection.exclude_expired` | true | query only unexpired certificates (crt.sh caps full-history answers to the oldest rows) |
+| `collection.truncation_min_records` / `truncation_stale_days` | 1000 / 45 | a large answer whose newest certificate is stale is recorded as truncated |
 | `dns.max_per_run` / `workers` / `timeout_s` / `recheck_hours` | 600 / 8 / 12 / 20 | DNS re-check |
 | `analysis.keep_derived` | 4 | analyses whose derived rows are kept |
 | `snapshots.interval_hours` / `keep` | 24 / 14 | snapshot cadence and retention |

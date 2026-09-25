@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import itertools
 import socket
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,8 +15,11 @@ AS_OF = "2026-09-26T00:00:00+00:00"
 _ids = itertools.count(10_000)
 
 
-def rec(names, *, cn=None, serial=None, nb="2026-09-20T10:00:00", ca=1, rid=None):
-    """A crt.sh-shaped JSON record."""
+def rec(names, *, cn=None, serial=None, nb=None, ca=1, rid=None):
+    """A crt.sh-shaped JSON record. not_before defaults to 5 days ago (relative to the
+    real clock, because collection-time truncation checks use the real clock)."""
+    if nb is None:
+        nb = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S")
     i = rid if rid is not None else next(_ids)
     return {"id": i, "issuer_ca_id": ca, "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
             "common_name": cn if cn is not None else names[0].lstrip("*."),
@@ -30,9 +34,11 @@ class FakeCrtsh:
     def __init__(self, data: dict):
         self.data = data
         self.calls: list = []
+        self.exclude_expired: list = []
 
-    def search(self, pattern):
+    def search(self, pattern, exclude_expired=True):
         self.calls.append(pattern)
+        self.exclude_expired.append(exclude_expired)
         v = self.data.get(pattern, [])
         if isinstance(v, str):
             return QueryResult(outcome=v, attempts=3, error=f"simulated {v}")

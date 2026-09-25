@@ -65,7 +65,14 @@ def test_only_crtsh_is_contacted_and_pattern_is_encoded():
     c.search(evil)
     u = urlsplit(calls[0])
     assert (u.scheme, u.netloc, u.path) == ("https", "crt.sh", "/")
-    assert parse_qs(u.query) == {"q": [evil], "output": ["json"]}   # injected & stays inside q
+    assert parse_qs(u.query) == {"q": [evil], "output": ["json"], "exclude": ["expired"]}  # & stays inside q
+
+
+def test_exclude_expired_can_be_turned_off():
+    from urllib.parse import parse_qs, urlsplit
+    c, calls, _ = client([Resp(b"[]")])
+    c.search("econt%", exclude_expired=False)
+    assert parse_qs(urlsplit(calls[0]).query) == {"q": ["econt%"], "output": ["json"]}
 
 
 def test_timeout_after_retries_is_timeout_not_empty():

@@ -42,7 +42,8 @@ def test_analysis_records_full_provenance(conn, cfg, populated):
     a = conn.execute("SELECT * FROM analysis_runs WHERE id=?", (populated,)).fetchone()
     assert a["status"] == "complete"
     assert len(a["dataset_sha256"]) == 64 and len(a["results_sha256"]) == 64
-    assert a["rules_version"] and a["software_version"] == "2.0.0"
+    from trawl import VERSION
+    assert a["rules_version"] and a["software_version"] == VERSION
     assert json.loads(a["correlation_config"])["min_kinds"] == 2
     assert (a["cutoff_run_id"], a["cutoff_record_id"]) == (2, conn.execute("SELECT MAX(id) FROM source_records").fetchone()[0])
 

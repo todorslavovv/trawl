@@ -61,6 +61,32 @@ def test_genuine_zero_is_accepted_only_when_prefix_is_empty(conn, cfg):
     assert r["status"] == "complete" and r["queries_empty"] == 2
 
 
+def test_queries_ask_for_unexpired_certificates(conn, cfg):
+    _, fake = run(conn, cfg, {"econt%": [rec(["econt-a.top"])], "%econt%": [rec(["econt-a.top"])]}, ["econt"])
+    assert fake.exclude_expired == [True, True]
+    assert json.loads(conn.execute("SELECT config_json FROM collection_runs").fetchone()[0])["exclude_expired"] is True
+
+
+def test_capped_answer_with_stale_newest_certificate_is_truncated(conn, cfg):
+    # REGRESSION (live run 2026-09-26): econt% returned 5103 rows, newest from 2018 -
+    # crt.sh caps big answers to the OLDEST rows. That is not "everything".
+    cfg["collection"]["truncation_min_records"] = 3
+    old = [rec([f"econt-{i}.top"], nb="2018-06-01T00:00:00") for i in range(4)]
+    fresh = [rec([f"my-econt-{i}.top"]) for i in range(5)]
+    r, _ = run(conn, cfg, {"econt%": old, "%econt%": fresh}, ["econt"])
+    q = {x["role"]: x for x in conn.execute("SELECT role, outcome, error, records, records_new FROM queries")}
+    assert q["prefix"]["outcome"] == "abandoned" and "truncated" in q["prefix"]["error"]
+    assert q["prefix"]["records_new"] == 4                    # truncated answers are still kept
+    assert json.loads(r["note"])["coverage"] == {"econt": "full"}   # the superset answered
+
+
+def test_small_or_recent_answers_are_not_called_truncated(conn, cfg):
+    cfg["collection"]["truncation_min_records"] = 3
+    r, _ = run(conn, cfg, {"econt%": [rec([f"econt-{i}.top"], nb="2018-01-01T00:00:00") for i in range(2)],
+                           "%econt%": [rec([f"econt-{i}.top"]) for i in range(6)]}, ["econt"])
+    assert r["queries_abandoned"] == 0 and r["status"] == "complete"
+
+
 def test_failures_are_never_counted_as_empty(conn, cfg):
     r, _ = run(conn, cfg, {"a%": "timeout", "%a%": "timeout", "%.a%": "network_error"}, ["a"])
     assert r["status"] == "failed"

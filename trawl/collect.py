@@ -10,6 +10,9 @@ modelled explicitly rather than treated as an error:
     keyword: an empty answer is accepted only if the prefix answer was also verifiably
     empty, and a superset answer smaller than its own subset is truncated. Both are
     reclassified 'abandoned' (records received are still kept);
+  * crt.sh also caps large answers to their OLDEST rows. Queries ask only for
+    unexpired certificates (`exclude=expired`), and a large answer whose newest
+    certificate is stale is recorded as truncated ('abandoned', records kept);
   * per keyword, coverage is full (the contains-pattern answered), partial
     (only prefix/dotted patterns answered) or none;
   * the run is complete only if every keyword has full coverage.
@@ -65,14 +68,15 @@ def collect_crtsh(conn: sqlite3.Connection, cfg: dict, *, force: bool = False,
         backoff_base_s=col["backoff_base_s"], backoff_max_s=col["backoff_max_s"],
         pace_s=col["pace_s"], max_bytes=int(col["max_response_mb"] * 1024 * 1024))
     run_cfg = {"collection": col, "keywords": keywords, "rules_version": rules.RULES_VERSION,
-               "patterns": {"prefix": "{k}%", "contains": "%{k}%", "dotted": "%.{k}%"}}
+               "patterns": {"prefix": "{k}%", "contains": "%{k}%", "dotted": "%.{k}%"},
+               "exclude_expired": col["exclude_expired"]}
     run_id = _start_run(conn, "crtsh", run_cfg)
     deadline = clock() + col["max_run_minutes"] * 60
     coverage = {}
     for kw in keywords:
         results = {}
         for role, pat in (("prefix", f"{kw}%"), ("contains", f"%{kw}%")):
-            results[role] = _query(conn, client, run_id, kw, role, pat, clock, deadline)
+            results[role] = _query(conn, client, run_id, kw, role, pat, clock, deadline, col)
         pre, con = results["prefix"], results["contains"]
         why = None
         if con["outcome"] == "ok_empty" and pre["outcome"] != "ok_empty":
@@ -91,7 +95,7 @@ def collect_crtsh(conn: sqlite3.Connection, cfg: dict, *, force: bool = False,
         if con["outcome"] in OK_OUTCOMES:
             coverage[kw] = "full"
         else:
-            dot = _query(conn, client, run_id, kw, "dotted", f"%.{kw}%", clock, deadline)
+            dot = _query(conn, client, run_id, kw, "dotted", f"%.{kw}%", clock, deadline, col)
             if dot["outcome"] == "ok_empty" and pre["outcome"] != "ok_empty":
                 # A leading-wildcard scan answering [] is only credible when the
                 # indexed prefix query also found nothing; otherwise it is the same
@@ -109,12 +113,38 @@ def collect_crtsh(conn: sqlite3.Connection, cfg: dict, *, force: bool = False,
     return _finish_crtsh(conn, run_id, coverage)
 
 
-def _query(conn, client, run_id, kw, role, pattern, clock, deadline) -> dict:
+def _truncated(records: list, col: dict) -> str | None:
+    """crt.sh caps large answers and keeps the OLDEST rows. A big answer whose newest
+    certificate is old is therefore not "everything", whatever its HTTP status."""
+    if len(records) < col["truncation_min_records"]:
+        return None
+    newest = max((str(r.get("not_before") or "") for r in records if isinstance(r, dict)), default="")
+    if not newest:
+        return None
+    try:
+        nb = datetime.fromisoformat(newest.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    nb = nb if nb.tzinfo else nb.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - nb).days
+    if age > col["truncation_stale_days"]:
+        return (f"answer looks truncated: {len(records)} records but the newest certificate "
+                f"was issued {newest[:10]} ({age} days ago); crt.sh caps large answers to the "
+                "oldest rows - records kept, coverage not complete")
+    return None
+
+
+def _query(conn, client, run_id, kw, role, pattern, clock, deadline, col) -> dict:
     started = utcnow()
     if clock() > deadline:
         res = crtsh.QueryResult(outcome="skipped", error="run time budget exhausted")
     else:
-        res = client.search(pattern)
+        res = client.search(pattern, exclude_expired=col["exclude_expired"])
+    received_ok = res.outcome == "ok"
+    if received_ok:
+        why = _truncated(res.records, col)
+        if why:
+            res.outcome, res.error = "abandoned", why
     new = invalid = 0
     cur = conn.execute(
         "INSERT INTO queries(run_id, keyword, role, query, started_at, finished_at, duration_s,"
@@ -122,10 +152,10 @@ def _query(conn, client, run_id, kw, role, pattern, clock, deadline) -> dict:
         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (run_id, kw, role, pattern, started, utcnow(), res.duration_s, res.outcome,
          res.http_status, res.attempts, res.bytes, res.response_sha256,
-         len(res.records) if res.outcome in OK_OUTCOMES else None, res.error))
+         len(res.records) if received_ok or res.outcome == "ok_empty" else None, res.error))
     qid = cur.lastrowid
     fetched = utcnow()
-    for rec in res.records if res.outcome == "ok" else ():
+    for rec in res.records if received_ok else ():
         if not (isinstance(rec, dict) and isinstance(rec.get("id"), int)
                 and isinstance(rec.get("name_value"), str)):
             invalid += 1
@@ -141,7 +171,7 @@ def _query(conn, client, run_id, kw, role, pattern, clock, deadline) -> dict:
                  (new, invalid, qid))
     conn.commit()
     return {"id": qid, "outcome": res.outcome,
-            "records": len(res.records) if res.outcome in OK_OUTCOMES else 0}
+            "records": len(res.records) if received_ok or res.outcome == "ok_empty" else 0}
 
 
 def _finish_crtsh(conn, run_id: int, coverage: dict) -> int:

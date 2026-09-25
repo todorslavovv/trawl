@@ -28,6 +28,14 @@ DEFAULTS: dict = {
         "pace_s": 6.0,               # minimum gap between any two requests
         "max_run_minutes": 180.0,    # remaining queries are recorded as skipped
         "max_response_mb": 256,
+        # crt.sh caps large answers and returns the OLDEST rows (measured: econt%
+        # stopped at 2018, speedy% at 2016). Asking only for unexpired certificates
+        # keeps answers small and current - what early warning needs.
+        "exclude_expired": True,
+        # An answer at least this large whose newest certificate is older than
+        # truncation_stale_days is treated as truncated (outcome 'abandoned').
+        "truncation_min_records": 1000,
+        "truncation_stale_days": 45,
     },
     "dns": {
         "max_per_run": 600,
