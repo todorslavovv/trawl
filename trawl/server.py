@@ -701,9 +701,34 @@ class Handler(BaseHTTPRequestHandler):
 
     do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_TRACE = do_CONNECT = _refuse
 
+    def send_error(self, code, message=None, explain=None):
+        """Protocol-level errors (malformed request line, bad version, oversized
+        headers). The stdlib default answers in HTTP/0.9 style when the request line
+        is unparseable - no status line, no headers - with an HTML page that echoes
+        the input. Always send a status line, the security headers and a fixed JSON
+        body instead, then close."""
+        self.close_connection = True
+        if getattr(self, "request_version", "HTTP/0.9") == "HTTP/0.9":
+            self.request_version = "HTTP/1.0"
+        client_side = 400 <= code < 500 or code == 505          # 505: unsupported HTTP version
+        body = json.dumps({"error": "bad request" if client_side else "server error"}).encode()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+            if getattr(self, "command", None) != "HEAD":
+                self.wfile.write(body)
+        except OSError:
+            pass
+
     def log_message(self, fmt, *args):
         # Method, path without query string, status. No client addresses are logged.
-        line = self.requestline.split(" ")
+        line = (getattr(self, "requestline", "") or "-").split(" ")
         path = urlsplit(line[1]).path if len(line) > 1 else "-"
         sys.stderr.write(f"{self.log_date_time_string()} {line[0][:8]} {path[:120]} {args[1] if len(args) > 1 else ''}\n")
 

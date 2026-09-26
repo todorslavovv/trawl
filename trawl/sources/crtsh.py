@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from .. import VERSION
 
@@ -80,7 +81,8 @@ class QueryResult:
     bytes: int | None = None
     response_sha256: str | None = None
     error: str | None = None
-    duration_s: float = 0.0
+    duration_s: float = 0.0          # first request sent -> final answer (retries included)
+    sent_at: str | None = None       # wall-clock time the first request left, after pacing
 
 
 class Client:
@@ -133,11 +135,14 @@ class Client:
         if exclude_expired:
             params["exclude"] = "expired"
         url = BASE_URL + "?" + urllib.parse.urlencode(params)
-        t0 = self._clock()
         res = QueryResult(outcome="network_error")
+        t0 = None
         for attempt in range(self.max_attempts):
             res.attempts = attempt + 1
             self._pace()
+            if t0 is None:
+                t0 = self._clock()
+                res.sent_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             retry_after = None
             try:
                 with self._open(url, self.timeout_s) as resp:

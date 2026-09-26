@@ -168,3 +168,11 @@ def test_the_only_http_destination_is_crtsh():
         if "urlopen" in text or "http.client" in text or "socket.create_connection" in text:
             hits.append(p.name)
     assert hits == ["crtsh.py"]
+
+
+def test_web_restart_does_not_restart_the_tunnel():
+    # REGRESSION (deployment 2026-09-26): Requires= propagated a web restart to the
+    # tunnel and changed the public trycloudflare hostname on every deploy.
+    unit = (ROOT / "deploy" / "trawl-tunnel.service").read_text()
+    assert "Requires=" not in unit and "BindsTo=" not in unit and "PartOf=" not in unit
+    assert "Wants=trawl-web.service" in unit

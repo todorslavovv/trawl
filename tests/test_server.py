@@ -180,3 +180,30 @@ def test_request_with_body_closes_the_connection(server):
         data += chunk
     s.close()
     assert data.count(b"HTTP/1.1 ") == 1 and b"Connection: close" in data
+
+
+@pytest.mark.parametrize("payload", [
+    b"GARBAGE / NOT-HTTP\r\n\r\n",                 # unparseable version -> stdlib HTTP/0.9 path
+    b"GET\r\n\r\n",                                 # too few words
+    b"GET / HTTP/9.9\r\n\r\n",                      # unsupported version
+    b"GET /<script>alert(1)</script> FOO/1.1\r\n\r\n",
+])
+def test_malformed_requests_get_headers_and_no_reflection(server, payload):
+    # REGRESSION (audit 2026-09-26): malformed request lines were answered without a
+    # status line or security headers, with an HTML page echoing the input.
+    import socket
+    s = socket.create_connection(("127.0.0.1", server), timeout=5)
+    s.sendall(payload)
+    data = b""
+    while True:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    s.close()
+    head, _, body = data.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.") and b" 400 " in head.split(b"\r\n")[0] or b" 505 " in head.split(b"\r\n")[0]
+    assert b"Content-Security-Policy:" in head and b"X-Content-Type-Options: nosniff" in head
+    assert json.loads(body) == {"error": "bad request"}
+    assert b"<script" not in data.lower() and b"alert(1)" not in data
+    assert b"NOT-HTTP" not in data and b"<html" not in data.lower()

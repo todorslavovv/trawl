@@ -2,7 +2,9 @@
 Description=Cloudflare Quick Tunnel (trycloudflare.com) -> trawl web on 127.0.0.1:8790
 Documentation=https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/
 After=trawl-web.service network-online.target
-Requires=trawl-web.service
+# Wants, not Requires: restarting the web service on a deploy must not restart the
+# tunnel, because every Quick Tunnel restart issues a new public hostname.
+Wants=trawl-web.service
 
 [Service]
 # Quick Tunnel for demonstration only - a new random hostname on every start.

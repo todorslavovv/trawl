@@ -143,6 +143,15 @@ def test_requests_are_paced():
     assert any(abs(s - 6) < 1e-9 for s in sleeps)
 
 
+def test_duration_and_sent_at_exclude_the_pacing_wait():
+    # REGRESSION (production run 1): started_at was stamped before the pace sleep, so
+    # stored timestamps could not show the pacing that did happen.
+    c, _, sleeps = client([Resp(b"[]"), Resp(b"[]")], pace=6)
+    c.search("a%")
+    r = c.search("b%")                      # waits 6 s of fake time before sending
+    assert r.sent_at and r.duration_s == 0
+
+
 def test_redirects_are_never_followed():
     from trawl.sources.crtsh import _OPENER, _NoRedirect
     assert any(isinstance(h, _NoRedirect) for h in _OPENER.handlers)

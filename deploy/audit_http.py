@@ -66,10 +66,12 @@ check("app.js has no innerHTML/eval", b"innerHTML =" not in js and b"eval(" not 
 # "No exposure" means nothing outside the three public assets is ever returned. A
 # reverse proxy may reject dot-segments itself (400) or normalise them first
 # ("/api/../app.js" -> "/app.js"); both are fine as long as only public bytes come back.
-PUBLIC = {req("GET", p)[1] for p in ("/", "/app.js", "/app.css")}
+PUBLIC = {req("GET", p)[1] for p in ("/", "/app.js", "/app.css", "/i18n.json")}
 for path in ("/../trawl.db", "/%2e%2e/%2e%2e/etc/passwd", "/.env", "/.git/config", "/trawl.db",
              "/data/trawl.db", "/deploy/deck.json", "/trawl/db.py", "/web/", "/api/", "//etc/passwd",
-             "/api/../app.js", "/server-status", "/debug", "/admin"):
+             "/api/../app.js", "/server-status", "/debug", "/admin", "/api/admin", "/api/debug",
+             "/api/config", "/api/db", "/api/sql", "/api/export", "/metrics", "/robots.txt/../.env",
+             "/app.js.map", "/i18n.json/../trawl.db", "/%00", "/api/domain%00", "/favicon.ico"):
     r, b = req("GET", path)
     ok = (r.status in (400, 404) or (r.status == 200 and b in PUBLIC)) \
         and b"root:" not in b and b"CREATE TABLE" not in b and b"import " not in b
@@ -89,6 +91,59 @@ for path, want in (("/api/domains?verdict=likely;DROP%20TABLE%20domains", 400),
 
 r, b = req("GET", "/api/domains?q=" + "a" * 3000)
 check("oversized request line refused", r.status in (414, 400, 431), r.status)
+
+r, b = req("GET", "/api/meta", headers={"X-Filler": "a" * 70000})
+check("oversized header refused or ignored without error disclosure", r.status in (200, 400, 431, 494, 520) and b"Traceback" not in b, r.status)
+
+xss = "%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+for path in (f"/api/domains?q={xss}", f"/api/campaign?id={xss}", f"/api/domain?name={xss}", f"/api/timeline?days={xss}"):
+    r, b = req("GET", path)
+    check(f"XSS payload not reflected: {path[:34]}", b"<script>" not in b.lower() and
+          r.getheader("Content-Type", "").startswith("application/json"), r.status)
+
+r, b = req("OPTIONS", "/api/meta", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"})
+check("CORS preflight refused, no allow-origin", r.status == 405 and r.getheader("Access-Control-Allow-Origin") is None, r.status)
+r, b = req("GET", "/api/meta", headers={"Origin": "https://evil.example"})
+check("cross-origin GET gets no allow-origin", r.getheader("Access-Control-Allow-Origin") is None)
+
+statuses = set()
+for path in ("/", "/api/meta", "/app.js", "/nope", "/api/", "//", "/api"):
+    r, _ = req("GET", path)
+    statuses.add(r.status)
+    if r.getheader("Location"):
+        statuses.add("location")
+check("no redirects anywhere", not any(isinstance(s, int) and 300 <= s < 400 for s in statuses) and "location" not in statuses, statuses)
+
+
+def raw(payload: bytes) -> bytes:
+    import socket
+    s = socket.create_connection((U.hostname, U.port or (443 if U.scheme == "https" else 80)), timeout=20)
+    if U.scheme == "https":
+        s = ssl.create_default_context().wrap_socket(s, server_hostname=U.hostname)
+    s.sendall(payload)
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        pass
+    s.close()
+    return data
+
+
+host = U.hostname.encode()
+resp = raw(b"GARBAGE / NOT-HTTP\r\nHost: " + host + b"\r\n\r\n")
+status_line = resp.split(b"\r\n", 1)[0]
+check("malformed request line: status line + 4xx/5xx, no HTML, input not echoed",
+      status_line.startswith(b"HTTP/1.") and status_line.split(b" ")[1][:1] in (b"4", b"5")
+      and b"<html" not in resp.lower() and b"NOT-HTTP" not in resp and b"Traceback" not in resp, status_line)
+resp = raw(b"GET /api/meta HTTP/1.1\r\nHost: " + host + b"\r\nContent-Length: 34\r\nConnection: keep-alive\r\n\r\nGET /api/sources HTTP/1.1\r\nHost: x\r\n\r\n")
+check("request body cannot smuggle a second request", resp.count(b"HTTP/1.1 200") <= 1, resp.count(b"HTTP/1.1 "))
+resp = raw(b"GET /api/meta HTTP/1.0\r\nHost: " + host + b"\r\n\r\n")
+check("HTTP/1.0 request answered normally", b" 200 " in resp[:20], resp[:20])
 
 r, b = req("GET", "/api/meta")
 if r.status == 200:

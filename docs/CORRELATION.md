@@ -95,13 +95,13 @@ campaigns deployed over two days with partly shared addresses, each with one
 campaigns; 4 same-registrable pairs; 4 shared-certificate pairs; two **sibling
 operations** (same brand, TLD and day, different kits) that must not merge; 24
 coincidental names sharing brand + day + TLD; 200 background names. Pairwise scores,
-measured 2026-09-26 on seeds 7, 11 and 23:
+measured 2026-09-26 on seeds 7, 11, 23, 42 and 99:
 
 | Rule set | Precision | Recall |
 |---|---:|---:|
-| v2 (defaults) | **1.000** (all seeds) | 0.782 |
+| v2 (defaults) | **1.000** (all seeds) | 0.782 (all seeds) |
 | beta-like (`require_non_weak = false`) | 0.994-1.000 | 0.782 |
-| naive (any shared attribute links) | 0.061-0.126 | 1.000 |
+| naive (any shared attribute links) | 0.040-0.126 | 1.000 |
 
 The missed pairs are exactly the partial-signature members, which share only one kind
 of evidence and are skipped by design. The v2 rule never merged the sibling operations.

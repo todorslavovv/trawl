@@ -150,7 +150,7 @@ def _query(conn, client, run_id, kw, role, pattern, clock, deadline, col) -> dic
         "INSERT INTO queries(run_id, keyword, role, query, started_at, finished_at, duration_s,"
         " outcome, http_status, attempts, bytes, response_sha256, records, error)"
         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (run_id, kw, role, pattern, started, utcnow(), res.duration_s, res.outcome,
+        (run_id, kw, role, pattern, res.sent_at or started, utcnow(), res.duration_s, res.outcome,
          res.http_status, res.attempts, res.bytes, res.response_sha256,
          len(res.records) if received_ok or res.outcome == "ok_empty" else None, res.error))
     qid = cur.lastrowid
