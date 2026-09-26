@@ -5,11 +5,14 @@ Attack-surface decisions, each deliberate:
     goes through a tunnel to that loopback port;
   * GET/HEAD only - every other method is 405; there is no write endpoint at all;
   * the database is opened read-only (mode=ro + PRAGMA query_only);
-  * static assets are three files loaded into memory at start-up, looked up by exact
+  * static assets are four files loaded into memory at start-up, looked up by exact
     path - no URL is ever mapped onto the filesystem, so traversal has nothing to reach;
   * every parameter is length-limited and parsed into int / enum / validated name;
     all SQL is parameterised; LIKE wildcards in user text are escaped;
   * errors return a fixed message; tracebacks go to the service log only;
+  * the public registry lookup is a database query: a searched name or URL is parsed
+    to a hostname and looked up, never contacted - this process opens no outbound
+    connection at all;
   * a strict Content-Security-Policy: the page may load nothing and connect nowhere
     except this origin - no fonts, CDNs, analytics or inline script.
 """
@@ -26,6 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import VERSION, rules
+from . import availability as AV
 from .db import connect
 from .names import normalise
 
@@ -54,7 +58,11 @@ NETWORK = [
      "note": "the only HTTP destination in the code; paced, retried with backoff"},
     {"id": "collector_dns", "from": "collector", "to": "host DNS resolver (systemd-resolved stub, then its upstream)",
      "purpose": "re-check whether flagged names resolve", "when": "each cycle",
-     "note": "name lookups only; no connection is made to resolved addresses"},
+     "note": "name lookups only; this step makes no connection to the resolved addresses"},
+    {"id": "collector_probe", "from": "collector", "to": "each registry domain's own public address (TCP 443 with TLS, else 80)",
+     "purpose": "availability check: DNS, TCP, TLS, one GET / (headers and at most 16 KiB, then discarded)",
+     "when": "about once a day per registry domain; never because a visitor searched",
+     "note": "public addresses only; redirects recorded, not followed; the domain's operator sees the checker's IP address"},
     {"id": "browser_self", "from": "browser", "to": "this server (same origin)", "purpose": "UI assets, translations and JSON API",
      "when": "always", "note": "enforced by Content-Security-Policy; no fonts, CDNs or analytics"},
     {"id": "browser_crtsh", "from": "browser", "to": "https://crt.sh/", "purpose": "outbound certificate links",
@@ -76,6 +84,10 @@ GLOSSARY = [
     {"id": "hypothesis", "term": "Campaign hypothesis",
      "text": "A connected group of accepted relationships. A lead for an investigator - not proof "
              "of common ownership, and never attribution."},
+    {"id": "availability", "term": "Availability observation",
+     "text": "Whether a registry domain's infrastructure answered trawl's check at one moment. "
+             "Reachable does not mean phishing content was seen; unreachable does not mean the "
+             "site is gone for good; a day without a check is unknown, not down."},
     {"id": "verified", "term": "Verified fact",
      "text": "Nothing this system outputs. Verification (content capture, registrar or hosting "
              "records, legal process) happens outside it."},
@@ -132,6 +144,34 @@ def p_name(p, key="name") -> str:
     return norm[0]
 
 
+def lookup_host(raw: str) -> str:
+    """Reduce what a visitor typed - a name or a URL - to one hostname. Parsing only."""
+    v = (raw or "").strip()
+    if not v:
+        raise BadRequest("q required")
+    if len(v) > 1000:
+        raise BadRequest("q too long")
+    if "://" in v:
+        try:
+            v = urlsplit(v).hostname or ""
+        except ValueError:
+            raise BadRequest("name is not a valid domain name") from None
+    else:
+        v = v.split("/")[0].split("?")[0].split("#")[0].rsplit("@", 1)[-1]
+        if v.count(":") == 1:
+            v = v.split(":")[0]                # host:port
+    v = v.strip().lower().rstrip(".")
+    if any(ord(c) > 127 for c in v):
+        try:
+            v = v.encode("idna").decode("ascii")   # internationalised name -> xn--
+        except UnicodeError:
+            raise BadRequest("name is not a valid domain name") from None
+    norm = normalise(v)
+    if not norm or norm[1]:
+        raise BadRequest("name is not a valid domain name")
+    return norm[0]
+
+
 def like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -170,6 +210,54 @@ class Api:
                 "dataset_sha256": a["dataset_sha256"], "results_sha256": a["results_sha256"],
                 "cutoffs": {"run": a["cutoff_run_id"], "record": a["cutoff_record_id"],
                             "dns": a["cutoff_dns_id"]}}
+
+    # /api/registry, /api/lookup - the public layer ------------------------------------
+    def _updated(self, a):
+        last = lambda src: self.one("SELECT MAX(finished_at) FROM collection_runs WHERE source_id=?"
+                                    " AND status IN ('complete','partial')", src)[0]
+        return {"analysis_at": a["created_at"], "collected_at": last("crtsh"),
+                "availability_at": last("availability")}
+
+    def _with_availability(self, rows):
+        hist = AV.histories(self.db, [r["name"] for r in rows])
+        for r in rows:
+            r["availability"] = AV.summarize(hist.get(r["name"], []))
+        return rows
+
+    def registry(self, p):
+        a = self.analysis()
+        limit = p_int(p, "limit", 50, 1, 100)
+        offset = p_int(p, "offset", 0, 0, 10_000_000)
+        pop = ",".join("?" * len(AV.REGISTRY))
+        total = self.one(f"SELECT COUNT(*) FROM decisions WHERE analysis_id=? AND verdict IN ({pop})",
+                         a["id"], *AV.REGISTRY)[0]
+        rows = [dict(r) | {"brands": json.loads(r["brands"])} for r in self.q(
+            "SELECT d.name, d.first_seen_at, x.verdict, x.brands, x.first_issued FROM decisions x"
+            f" JOIN domains d ON d.id=x.domain_id WHERE x.analysis_id=? AND x.verdict IN ({pop})"
+            " ORDER BY d.first_seen_at DESC, x.score DESC, d.name LIMIT ? OFFSET ?",
+            a["id"], *AV.REGISTRY, limit, offset)]
+        return {"total": total, "limit": limit, "offset": offset, "updated": self._updated(a),
+                "rows": self._with_availability(rows)}
+
+    def lookup(self, p):
+        """Is this name in the registry? A database query - the name is never contacted."""
+        a = self.analysis()
+        host = lookup_host(_one(p, "q"))
+        cands = [host] + ([host[4:]] if host.startswith("www.") and normalise(host[4:]) else [])
+        found = []
+        for name in cands:
+            r = self.one("SELECT d.name, d.first_seen_at, x.verdict, x.brands, x.first_issued"
+                         " FROM domains d LEFT JOIN decisions x ON x.analysis_id=? AND x.domain_id=d.id"
+                         " WHERE d.name=?", a["id"], name)
+            if r is not None:
+                found.append(r)
+        hit = next((r for r in found if r["verdict"] in AV.REGISTRY), None)
+        out = {"host": host, "in_registry": hit is not None, "known": bool(found),
+               "matched": (hit or (found[0] if found else {"name": None}))["name"],
+               "updated": self._updated(a)}
+        if hit is not None:
+            out["entry"] = self._with_availability([dict(hit) | {"brands": json.loads(hit["brands"])}])[0]
+        return out
 
     # /api/meta ---------------------------------------------------------------------
     def meta(self, p):
@@ -349,6 +437,13 @@ class Api:
         camp = self.one("SELECT c.* FROM campaign_members m JOIN campaigns c ON"
                         " c.analysis_id=m.analysis_id AND c.id=m.campaign_id"
                         " WHERE m.analysis_id=? AND m.domain_id=?", aid, d["id"])
+        avail = [dict(r) | {"addresses": json.loads(r["addresses"])} for r in self.q(
+            "SELECT o.id, o.run_id, r.status run_status, o.source_id, o.checker, o.checked_at,"
+            " o.duration_ms, o.dns, o.addresses, o.address, o.port, o.tcp, o.tls, o.http,"
+            " o.http_status, o.location, o.server, o.protection, o.challenge, o.body_bytes,"
+            " o.truncated, o.state, o.reason, o.error FROM availability_observations o"
+            " JOIN collection_runs r ON r.id=o.run_id WHERE o.domain=? ORDER BY o.id DESC LIMIT 200",
+            name)] if AV.has_table(self.db) else []
         inds = [dict(r) for r in self.q(
             "SELECT i.kind, i.value, i.class, i.df, i.weight, i.status FROM domain_indicators di"
             " JOIN indicators i ON i.analysis_id=di.analysis_id AND i.id=di.indicator_id"
@@ -358,6 +453,10 @@ class Api:
                 "decision": (dict(dec) | {"brands": json.loads(dec["brands"])}) if dec else None,
                 "signals": sig, "certificates": certs, "dns": dns, "records": records,
                 "relationships": rels, "indicators": inds,
+                "availability": {
+                    "in_registry": bool(dec and dec["verdict"] in AV.REGISTRY),
+                    "summary": AV.summarize(AV.histories(self.db, [name]).get(name, [])),
+                    "history": avail},
                 "campaign": (dict(camp) | {"brands": json.loads(camp["brands"])}) if camp else None}
 
     def _relationships(self, aid, where, args, limit=500):
@@ -541,13 +640,20 @@ class Api:
                 "runs": len(runs), "status_counts": dict(status),
                 "last_run": dict(runs[0]) if runs else None, "last_complete": last_ok,
                 "answer_rate_7d": round(ans / req, 4) if req else None,
-                "records": self.one("SELECT COUNT(*) FROM source_records WHERE source_id=?",
-                                    s["id"])[0] if s["id"] == "crtsh" else
-                           self.one("SELECT COUNT(*) FROM dns_observations")[0]})
+                "records": self._source_records(s["id"])})
         return {"sources": out, "network": NETWORK}
 
+    def _source_records(self, sid):
+        if sid == "crtsh":
+            return self.one("SELECT COUNT(*) FROM source_records WHERE source_id=?", sid)[0]
+        if sid == "dns":
+            return self.one("SELECT COUNT(*) FROM dns_observations")[0]
+        if not AV.has_table(self.db):
+            return 0
+        return self.one("SELECT COUNT(*) FROM availability_observations WHERE source_id=?", sid)[0]
+
     def runs(self, p):
-        src = p_enum(p, "source", {"crtsh", "dns"})
+        src = p_enum(p, "source", {"crtsh", "dns", "availability"})
         limit = p_int(p, "limit", 50, 1, 500)
         offset = p_int(p, "offset", 0, 0, 10_000_000)
         rows = self.q("SELECT * FROM collection_runs" + (" WHERE source_id=?" if src else "")
@@ -576,7 +682,11 @@ class Api:
         dns = [dict(o) | {"addresses": json.loads(o["addresses"])} for o in self.q(
             "SELECT domain, checked_at, outcome, addresses, error FROM dns_observations"
             " WHERE run_id=? ORDER BY domain LIMIT 1000", rid)]
-        return {"run": d, "queries": qs, "dns": dns}
+        avail = [dict(o) for o in self.q(
+            "SELECT domain, checked_at, dns, tcp, tls, http, http_status, protection, challenge,"
+            " state, reason FROM availability_observations WHERE run_id=? ORDER BY domain LIMIT 1000",
+            rid)] if AV.has_table(self.db) else []
+        return {"run": d, "queries": qs, "dns": dns, "availability": avail}
 
     # /api/analyses, /api/methodology -----------------------------------------------------
     def analyses(self, p):
@@ -611,7 +721,8 @@ class Api:
             "network": NETWORK, "glossary": GLOSSARY,
         }
 
-    ROUTES = {"/api/meta": "meta", "/api/overview": "overview", "/api/domains": "domains",
+    ROUTES = {"/api/registry": "registry", "/api/lookup": "lookup",
+              "/api/meta": "meta", "/api/overview": "overview", "/api/domains": "domains",
               "/api/domain": "domain", "/api/certificates": "certificates",
               "/api/certificate": "certificate", "/api/campaigns": "campaigns",
               "/api/campaign": "campaign", "/api/timeline": "timeline", "/api/sources": "sources",

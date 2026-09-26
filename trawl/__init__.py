@@ -4,4 +4,4 @@ Independent portfolio / research demonstration. Not affiliated with or endorsed 
 ГДБОП (GDBOP) or any other authority, nor with the author of any third-party feed.
 """
 
-VERSION = "2.1.2"
+VERSION = "2.2.0"

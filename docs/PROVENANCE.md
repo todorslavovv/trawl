@@ -11,6 +11,7 @@ reproduced from a stored dataset.
 | Each crt.sh query | keyword, role, pattern, times, duration, outcome, HTTP status, attempts, bytes, response SHA-256, records received/new/invalid, error |
 | Each source record | verbatim canonical payload, payload SHA-256, crt.sh id, the run and query that first returned it, fetch time |
 | Each DNS observation | name, time, resolver description, outcome, sorted addresses, error, run |
+| Each availability check | name, time, run, source and checker version, duration, DNS result and addresses, address and port contacted, TCP / TLS / HTTP results, status, redirect target, bot protection, state, reason, error - not part of any analysis dataset |
 | Each analysis | `as_of`, software version, rules version, correlation configuration and its SHA-256, input cut-offs (run, record, DNS), dataset SHA-256, results SHA-256, counts, duration |
 | Each decision / signal | score, verdict, brands, rule id, points, the matched text |
 | Each relationship | weight, kinds, accepted or not, strength, reason, and every indicator with its df and weight |
@@ -29,7 +30,11 @@ Because observations are append-only, those cut-offs select the same rows foreve
 
 * **Dataset SHA-256** - SHA-256 of the canonical serialisation of those rows: source
   ids, runs, queries, source records, DNS observations, each as one line of canonical
-  JSON (sorted keys, no whitespace), in a fixed order.
+  JSON (sorted keys, no whitespace), in a fixed order. Only the analysis sources
+  (`crtsh`, `dns`) and their runs are included; the availability probe's source row and
+  runs are not, so availability checks can never change a fingerprint - the first
+  production snapshot still replays to its recorded fingerprints after the probe was
+  added.
 * **Results SHA-256** - SHA-256 of the canonical results document: every non-`none`
   decision with its signals, suppressed indicators, accepted relationships with
   evidence, and campaigns - all sorted, weights rounded to 4 decimals.

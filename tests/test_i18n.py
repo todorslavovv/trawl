@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from trawl import availability as AV
 from trawl import rules
 from trawl.config import load
 from trawl.correlate import build
 from trawl.scoring import Facts, score
 from trawl.server import GLOSSARY, NETWORK, STATIC
-from trawl.sources import ADAPTERS
+from trawl.sources import ADAPTERS, probe
 
 from .conftest import AS_OF
 
@@ -107,7 +108,15 @@ def _needed_dynamic_keys():
     keys |= {f"health.legend.{k}" for k in ("ok", "empty", "abandoned", "timeout", "failed", "skipped")}
     keys |= {f"tl.type.{k}" for k in ("issued", "first_seen", "dns_change")}
     keys |= {f"tl.filter.{k}" for k in ("all", "issued", "first_seen", "dns_change")}
-    keys |= {f"meth.does.{i}" for i in range(1, 6)} | {f"meth.cannot.{i}" for i in range(1, 5)}
+    keys |= {f"meth.does.{i}" for i in range(1, 7)} | {f"meth.cannot.{i}" for i in range(1, 5)}
+    keys |= {f"avail.state.{x}" for x in probe.STATES} | {f"avail.reason.{x}" for x in probe.REASONS}
+    for x in ("reachable", "unreachable", "unknown", "unchecked"):
+        keys |= {f"avail.public.{x}", f"avail.public_text.{x}"}
+    for v in AV.REGISTRY:
+        keys |= {f"pub.status.{v}", f"pub.status_text.{v}"}
+    keys |= {f"avail.tcp.{x}" for x in ("ok", "refused", "timeout", "unreachable", "error")}
+    keys |= {f"avail.tls.{x}" for x in ("ok", "cert_invalid", "failed", "timeout")}
+    keys |= {f"avail.http.{x}" for x in ("ok", "timeout", "malformed", "no_response")}
     return keys
 
 
@@ -126,6 +135,8 @@ def test_english_side_matches_the_code_it_describes():
                 EN[f"source.{s['id']}.provenance"]) == (s["name"], s["description"], s["provenance"])
     for g in GLOSSARY:
         assert (EN[f"glossary.{g['id']}.term"], EN[f"glossary.{g['id']}.text"]) == (g["term"], g["text"])
+    for code, (_, text) in probe.REASONS.items():
+        assert EN[f"avail.reason.{code}"] == text
 
 
 # identifiers and technical values that are the same in both languages
@@ -213,6 +224,7 @@ def test_every_collection_note_is_translated(conn, cfg):
     "limit must be between 1 and 500", "sort must be one of: first_issued, first_seen, name, score",
     "q too long", "id required", "id must look like C-xxxxxxxxxx",
     "verdict must be a comma list of: likely, possible", "malformed query string", "internal error", "not found",
+    "q required",
 ])
 def test_every_api_error_is_translated(msg):
     assert CYRILLIC.search(tx_bg(msg)), msg

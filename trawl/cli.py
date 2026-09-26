@@ -3,7 +3,8 @@
     python -m trawl collect   [--force]       crt.sh keyword collection (one run)
     python -m trawl dnscheck                  re-resolve flagged names
     python -m trawl analyze                   score + correlate, record provenance
-    python -m trawl cycle     [--force]       collect -> dnscheck -> analyze -> snapshot if due
+    python -m trawl cycle     [--force]       collect -> dnscheck -> analyze -> availability -> snapshot
+    python -m trawl availability [--force]    check the registry domains that are due
     python -m trawl snapshot  [--analysis N]  export a portable, fingerprinted dataset
     python -m trawl verify    MANIFEST        check a snapshot's hashes
     python -m trawl replay    MANIFEST        rebuild and re-run; compare fingerprints
@@ -85,6 +86,9 @@ def cmd_cycle(args, cfg):
             print(f"collect skipped: {e}")
         dnscheck(conn, cfg, flagged_by_priority(conn, cfg))
         aid = run_analysis(conn, cfg)
+        if cfg["availability"]["enabled"]:
+            from .availability import registry_names, run as check_availability
+            check_availability(conn, cfg, registry_names(conn))
         last = conn.execute("SELECT MAX(created_at) FROM snapshots").fetchone()[0]
         due = (last is None or datetime.now(timezone.utc) - datetime.fromisoformat(last)
                >= timedelta(hours=cfg["snapshots"]["interval_hours"]))
@@ -92,6 +96,14 @@ def cmd_cycle(args, cfg):
             path = export(conn, aid, cfg["snapshot_dir"])
             prune(conn, cfg["snapshot_dir"], cfg["snapshots"]["keep"])
             print(f"  snapshot: {path}")
+    return 0
+
+
+def cmd_availability(args, cfg):
+    from .availability import registry_names, run
+    with writer_lock(cfg["db_path"]):
+        conn = _writer(args, cfg)
+        run(conn, cfg, registry_names(conn), force=args.force)
     return 0
 
 
@@ -173,6 +185,7 @@ def main(argv=None) -> int:
     sub.add_parser("analyze")
     p = sub.add_parser("cycle")
     p.add_argument("--force", action="store_true")
+    sub.add_parser("availability").add_argument("--force", action="store_true")
     p = sub.add_parser("snapshot")
     p.add_argument("--analysis", type=int)
     p.add_argument("--out")

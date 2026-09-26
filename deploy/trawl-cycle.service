@@ -1,5 +1,5 @@
 [Unit]
-Description=trawl collection cycle (crt.sh -> DNS re-check -> analysis -> snapshot)
+Description=trawl collection cycle (crt.sh -> DNS re-check -> analysis -> availability -> snapshot)
 Documentation=file://%h/trawl/docs/OPERATIONS.md
 After=network-online.target
 

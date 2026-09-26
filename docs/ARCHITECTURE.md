@@ -9,8 +9,11 @@
 * **Failures are data.** Every request ends in a classified outcome; a run's
   completeness is recorded, never inferred.
 * **The application is not an attack surface.** The web process is read-only, bound to
-  loopback, and has no write endpoint. Collectors contact exactly two things: crt.sh
-  and the host's DNS resolver.
+  loopback, has no write endpoint and opens no outbound connection. The collector
+  contacts crt.sh and the host's DNS resolver; the availability probe contacts only
+  the vetted public addresses of registry domains.
+* **Simple outside, detailed inside.** The default page is a public registry with
+  search; the analysis views keep every detail behind it.
 
 ## Components
 
@@ -20,6 +23,8 @@
 | `trawl/db.py` | SQLite schema (WAL), read-only connections, the single-writer lock, recovery of runs left `running` by a killed process |
 | `trawl/sources/crtsh.py` | crt.sh adapter: paced, retrying HTTPS client with classified outcomes; the only HTTP client in the code |
 | `trawl/sources/dns.py` | DNS adapter: `getaddrinfo` through the host resolver, concurrent, with a wall-clock timeout and classified outcomes |
+| `trawl/sources/probe.py` | availability probe: DNS, TCP, TLS, one `GET /` to vetted public addresses; classification into reason and state |
+| `trawl/availability.py` | the registry population, due-scheduling, availability runs, summaries (last checked, last confirmed reachable, state) |
 | `trawl/collect.py` | collection runs (crt.sh query plan, abandoned-scan detection, coverage, run status), DNS re-check runs, normalisation into the index |
 | `trawl/names.py` | DNS-name validation, public/platform suffixes, tokenisation, complete word segmentation, one-edit comparison |
 | `trawl/rules.py` | the rule set as data (brands, allow-list, namesakes, TLD tiers, lure words, points, thresholds) and `RULES_VERSION` |
@@ -27,9 +32,9 @@
 | `trawl/correlate.py` | indicator weighting, relationship acceptance, campaign components and tiers - pure functions |
 | `trawl/analysis.py` | one analysis run: load facts at fixed cut-offs, score, extract indicators, correlate, write results, fingerprint |
 | `trawl/snapshot.py` | canonical dataset serialisation, dataset fingerprint, portable snapshot export, verify, import, replay |
-| `trawl/server.py` | read-only JSON API and static UI, strict headers, validated parameters |
+| `trawl/server.py` | read-only JSON API and static UI, strict headers, validated parameters; `/api/registry` and `/api/lookup` for the public layer (database only) |
 | `trawl/web/` | `index.html`, `app.css`, `app.js` - the investigation UI, no external assets; `i18n.json` - every UI string in Bulgarian (default) and English, plus patterns that render the stored English evidence sentences in Bulgarian |
-| `trawl/cli.py` | commands (`collect`, `dnscheck`, `analyze`, `cycle`, `snapshot`, `verify`, `replay`, `report`, `stats`, `serve`) |
+| `trawl/cli.py` | commands (`collect`, `dnscheck`, `analyze`, `cycle`, `availability`, `snapshot`, `verify`, `replay`, `report`, `stats`, `serve`) |
 
 Source adapters are modules exposing a `SOURCE` description (stored in the `sources`
 table) and a fetch function returning classified outcomes. A new source is a new
@@ -53,15 +58,19 @@ resolver ◄── dnscheck ◄── flagged_by_priority (current rules, in mem
                       campaign_members                                   (derived)
                                      │
                                      ├─► snapshot export ─► *.jsonl.gz + manifest
-                                     └─► server (read-only) ─► UI
+                                     │
+registry names ──► availability (probe) ──► availability_observations  (observations,
+                                     │                                   not analysis input)
+                                     └─► server (read-only) ─► public registry + analysis UI
 ```
 
 ## Storage layers
 
 1. **Observations** - `collection_runs`, `queries`, `source_records`,
-   `dns_observations`. Written once by the run that produced them; never updated after
+   `dns_observations`, `availability_observations`. Written once by the run that produced them; never updated after
    that run finishes, never deleted. `source_records.payload` is the crt.sh JSON
-   record in canonical form, with its SHA-256.
+   record in canonical form, with its SHA-256. Availability observations and their
+   runs are observations beside the analysis: they are not in any analysis dataset.
 2. **Index** - `domains`, `certificates`, `cert_records`, `cert_names`. Derived from
    `source_records` in id order; `normalize` is idempotent and replay rebuilds it
    identically. Precertificate and final certificate (same issuer + serial) become one
@@ -85,8 +94,8 @@ sources → `sources`; provenance → `analysis_runs` + `snapshots` + the column
 
 | Process | Trigger | Network | Database |
 |---|---|---|---|
-| `trawl cycle` | systemd timer, every 6 h (also enforced in code: `collection.min_interval_hours`) | crt.sh (HTTPS), DNS resolver | read/write, under an exclusive lock |
-| `trawl serve` | long-running service, `127.0.0.1:8790` | listens on loopback only; no outbound connections | read-only (`mode=ro`, `query_only`) |
+| `trawl cycle` | systemd timer, every 6 h (collection also enforced in code: `collection.min_interval_hours`) | crt.sh (HTTPS), DNS resolver; registry domains' public addresses (availability, ~daily each) | read/write, under an exclusive lock |
+| `trawl serve` | long-running service, `127.0.0.1:8790` | listens on loopback only; no outbound connections (lookups are database queries) | read-only (`mode=ro`, `query_only`) |
 | `cloudflared` Quick Tunnel | optional service, demo only | Cloudflare edge | none |
 
 Only one writer runs at a time (`fcntl` lock next to the database). Readers use WAL

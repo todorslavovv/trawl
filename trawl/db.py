@@ -3,8 +3,10 @@
 Three layers, kept deliberately separate:
 
 1. Observations (append-only): collection runs, the queries they made, the raw
-   source records exactly as received, and DNS observations. Nothing here is ever
-   updated after the run that wrote it finishes, and nothing is ever deleted.
+   source records exactly as received, DNS observations and availability
+   observations. Nothing here is ever updated after the run that wrote it finishes,
+   and nothing is ever deleted. Availability observations are not an input of any
+   analysis: they never change scores, campaigns or fingerprints.
 2. Normalised index (derived, deterministic): domains, certificates and which
    certificate lists which name - rebuilt identically from (1) by `normalize`.
 3. Analyses (derived, reproducible): scores, signals, indicators, relationships and
@@ -106,6 +108,37 @@ CREATE TABLE IF NOT EXISTS dns_observations (
     error      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dns_domain ON dns_observations(domain, id);
+
+-- one row per availability check (sources/probe.py); source_id keeps the method
+CREATE TABLE IF NOT EXISTS availability_observations (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES collection_runs(id),
+    source_id   TEXT NOT NULL REFERENCES sources(id),
+    checker     TEXT NOT NULL,
+    domain      TEXT NOT NULL,
+    checked_at  TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    dns         TEXT CHECK (dns IN
+                  ('resolved','nxdomain','no_address','temporary_failure','failure','timeout')),
+    addresses   TEXT NOT NULL,
+    address     TEXT,
+    port        INTEGER,
+    tcp         TEXT CHECK (tcp IN ('ok','refused','timeout','unreachable','error')),
+    tls         TEXT CHECK (tls IN ('ok','cert_invalid','failed','timeout')),
+    http        TEXT CHECK (http IN ('ok','timeout','malformed','no_response')),
+    http_status INTEGER,
+    location    TEXT,
+    server      TEXT,
+    protection  TEXT,
+    challenge   INTEGER NOT NULL DEFAULT 0,
+    body_bytes  INTEGER,
+    truncated   INTEGER NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL CHECK (state IN ('reachable','dns_only','unreachable','timeout',
+                                               'tls_error','server_error','unknown')),
+    reason      TEXT NOT NULL,
+    error       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_avail_domain ON availability_observations(domain, id);
 
 -- normalised index, derived from source_records -----------------------------
 CREATE TABLE IF NOT EXISTS domains (
@@ -270,7 +303,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 """
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"          # 2: availability_observations
 
 
 def utcnow() -> str:
@@ -289,8 +322,8 @@ def connect(path: str | os.PathLike, *, readonly: bool = False) -> sqlite3.Conne
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
-        conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
-                     (SCHEMA_VERSION,))
+        conn.execute("INSERT INTO meta(key, value) VALUES ('schema_version', ?)"
+                     " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (SCHEMA_VERSION,))
         from .sources import register_all
         register_all(conn)
         conn.commit()

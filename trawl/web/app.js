@@ -118,6 +118,29 @@
   const kindLabel = (k) => h("span", { title: k }, label("kind", k));
   const addrList = (addrs) => (addrs && addrs.length ? h("div", { class: "addr-list" }, addrs.map((a) => h("div", {}, a))) : "–");
   const brandTag = (b) => tag(brandLabel(b), b);
+
+  // public layer: local date/time, plain-language status and availability
+  function toDate(iso) {
+    if (!iso) return null;
+    const str = String(iso);
+    const tt = Date.parse(/[zZ]$|[+-]\d\d:\d\d$/.test(str) ? str : `${str}Z`);
+    return Number.isNaN(tt) ? null : new Date(tt);
+  }
+  const pad2 = (x) => String(x).padStart(2, "0");
+  function pubDate(iso) {
+    const d = toDate(iso);
+    if (!d) return "–";
+    return LANG === "bg" ? `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`
+      : d.toLocaleDateString("en-GB");
+  }
+  const pubDateTime = (iso) => { const d = toDate(iso); return d ? `${pubDate(iso)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : "–"; };
+  const when = (iso, withTime) => h("time", { class: "nowrap", datetime: iso, title: iso ? `${dt(iso)} UTC` : null }, withTime ? pubDateTime(iso) : pubDate(iso));
+  const pubStatus = (v) => chip(`v-${v}`, label("pub.status", v), label("pub.status_text", v));
+  const availChip = (st) => h("span", { class: `nowrap av av-${st}`, title: label("avail.public_text", st) }, h("span", { class: "dot" }), label("avail.public", st));
+  const PUBLIC_OF = { reachable: "reachable", unreachable: "unreachable" };
+  const stateChip = (st) => h("span", { class: `nowrap av av-${PUBLIC_OF[st] || "unknown"}`, title: st }, h("span", { class: "dot" }), label("avail.state", st));
+  const reasonText = (o) => t(`avail.reason.${o.reason}`, { status: o.http_status ?? "" });
+  const protText = (o) => [o.protection, o.challenge ? t("dd.av.challenge") : null].filter(Boolean).join(" · ") || "–";
   function scoreBar(score, verdict) {
     return h("span", { class: "scorebar" }, h("span", { class: "mono" }, score),
       h("i", {}, h("b", { style: { width: `${Math.max(2, score)}%`, "--c": VCOL[verdict] || "var(--accent)" } })));
@@ -183,6 +206,7 @@
   }
 
   const ICONS = {
+    registry: "M4 3h12v14H4zM7 7h6M7 10h6M7 13h4",
     overview: "M3 3h6v8H3zM11 3h6v5h-6zM11 10h6v7h-6zM3 13h6v4H3z",
     domains: "M10 2a8 8 0 100 16 8 8 0 000-16zM2 10h16M10 2c2.5 2.2 3.5 5 3.5 8s-1 5.8-3.5 8c-2.5-2.2-3.5-5-3.5-8s1-5.8 3.5-8z",
     certificates: "M4 3h12v10H4zM7 7h6M7 10h4M8 13l-1 5 3-2 3 2-1-5",
@@ -192,14 +216,16 @@
     collection: "M3 16l4-6 3 3 4-7 3 4M3 3v14h14",
     methodology: "M5 3h8l3 3v11H5zM8 9h6M8 12h6M8 15h4",
   };
-  const NAV = [["", "overview"], ["domains", "domains"], ["certificates", "certificates"], ["campaigns", "campaigns"],
-    ["timeline", "timeline"], null, ["sources", "sources"], ["collection", "collection"], ["methodology", "methodology"]];
+  // Public registry first; the analyst views are one click away under "Analysis".
+  const NAV = [["", "registry"], "analysis", ["analysis", "overview"], ["domains", "domains"], ["certificates", "certificates"],
+    ["campaigns", "campaigns"], ["timeline", "timeline"], null, ["sources", "sources"], ["collection", "collection"], ["methodology", "methodology"]];
   const SECTION_OF = { domain: "domains", certificate: "certificates", campaign: "campaigns", run: "collection" };
 
   function buildNav() {
     const nav = document.getElementById("nav");
     nav.replaceChildren(...NAV.map((item) => {
       if (!item) return h("div", { class: "sep" });
+      if (typeof item === "string") return h("div", { class: "nav-group" }, t(`nav.group.${item}`));
       const [path, icon] = item;
       return h("a", { href: `#/${path}`, "data-p": path },
         s("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" }, s("path", { d: ICONS[icon], fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" })),
@@ -217,12 +243,16 @@
     return h("div", { class: "errbox" }, h("b", {}, t("error.load")), " ", e instanceof ApiError ? tx(msg) : h("span", { class: "mono" }, msg));
   }
 
+  let lastPath = null;
   async function render() {
     const { path, params } = parseHash();
     const page = PAGES[path] || notFound;
     const token = ++renderToken;
     const title = page.titleKey ? t(page.titleKey) : "trawl";
+    document.body.classList.toggle("public", !!page.public);
     setNav(path, [title]);
+    if (path !== lastPath) scrollTo(0, 0);
+    lastPath = path;
     document.title = `${title} · trawl`;
     view.replaceChildren(h("div", { class: "loading" }, t("loading")));
     try {
@@ -231,6 +261,7 @@
       view.replaceChildren(node);
       view.style.animation = "none"; void view.offsetWidth; view.style.animation = "";
       if (page.crumbs) setNav(path, page.crumbs(params));
+      if (page.public && params.get("q")) document.querySelector(".result")?.scrollIntoView({ block: "nearest" });
     } catch (e) {
       if (token !== renderToken) return;
       view.replaceChildren(errorBox(e));
@@ -306,7 +337,72 @@
   // ---------------------------------------------------------------- pages
   const PAGES = {};
 
-  PAGES[""] = async function overview() {
+  const REG_SIZE = 50;
+  PAGES[""] = async function registry(params) {
+    const q = (params.get("q") || "").trim();
+    const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
+    const [reg, look] = await Promise.all([
+      api("registry", { limit: REG_SIZE, offset: (page - 1) * REG_SIZE }),
+      q ? api("lookup", { q }).catch((e) => ({ error: e })) : null,
+    ]);
+    const input = h("input", { type: "search", name: "q", value: q, maxlength: "1000", spellcheck: "false", autocomplete: "off", autocapitalize: "none",
+      placeholder: t("reg.search_ph"), "aria-label": t("reg.search_aria") });
+    const form = h("form", { class: "reg-search", role: "search", onsubmit: (e) => { e.preventDefault(); const v = input.value.trim(); go("", v ? { q: v } : {}); } },
+      s("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" }, s("circle", { cx: 8.5, cy: 8.5, r: 5.5, fill: "none", stroke: "currentColor", "stroke-width": "1.6" }), s("path", { d: "M13 13l4.5 4.5", stroke: "currentColor", "stroke-width": "1.6", "stroke-linecap": "round" })),
+      input, h("button", { class: "btn primary", type: "submit" }, t("reg.search_btn")));
+    const u = reg.updated;
+    const updated = h("p", { class: "reg-updated" }, t("reg.updated", { at: pubDateTime(u.analysis_at) }), " · ",
+      u.availability_at ? t("reg.checked", { at: pubDateTime(u.availability_at) }) : t("reg.checked_never"), h("span", { class: "faint" }, ` (${t("reg.local_time")})`));
+    const pages = Math.max(1, Math.ceil(reg.total / REG_SIZE));
+    const rows = table([
+      { label: t("reg.col.domain"), cls: "dom", cell: (r) => h("a", { href: `#/?q=${encodeURIComponent(r.name)}` }, r.name) },
+      // wrap at spaces, never inside "е-винетка" (non-breaking hyphen, display only)
+      { label: t("reg.col.brand"), cell: (r) => (r.brands.length ? r.brands.map((b) => brandLabel(b).replace(/-/g, "\u2011")).join(", ") : "–") },
+      { label: t("reg.col.status"), cell: (r) => pubStatus(r.verdict) },
+      { label: t("reg.col.date"), cell: (r) => when(r.first_seen_at) },
+      // last check and the state it found belong together: one column, date then state
+      { label: t("reg.col.checked"), cell: (r) => (r.availability.last_checked
+        ? h("span", { class: "reg-check" }, when(r.availability.last_checked, true), availChip(r.availability.state))
+        : availChip("unchecked")) },
+    ], reg.rows, { empty: t("reg.empty") });
+    const tableCard = h("section", { class: "card flush reg-table" },
+      h("header", {}, h("h2", {}, t("reg.table_title")), h("span", { class: "hint" }, t("reg.table_hint", { n: n(reg.total) }))),
+      rows, pager(reg.total, (page - 1) * REG_SIZE, REG_SIZE, () => go("", { page: Math.max(1, page - 1) }), () => go("", { page: Math.min(pages, page + 1) }), t("pager.domains")));
+    return h("div", { class: "registry" },
+      h("div", { class: "reg-hero" }, h("h1", {}, t("reg.title")), h("p", { class: "lead" }, t("reg.intro")), form, updated),
+      look ? lookupCard(look) : null, tableCard,
+      h("p", { class: "reg-note" }, t("reg.note_reachable")));
+  };
+  PAGES[""].titleKey = "nav.registry";
+  PAGES[""].public = true;
+  function lookupCard(look) {
+    if (look.error) {
+      return h("section", { class: "card result miss", role: "status" }, h("h2", {}, t("reg.invalid_title")), h("p", {}, t("reg.invalid_text")));
+    }
+    const tech = (name) => h("a", { class: "btn", href: `#/domain?name=${encodeURIComponent(name)}` }, t("reg.technical"));
+    if (look.in_registry) {
+      const e = look.entry, a = e.availability;
+      return h("section", { class: "card result hit", role: "status" },
+        h("h2", {}, t("reg.found_title")), h("div", { class: "result-name" }, e.name),
+        look.matched !== look.host ? h("p", { class: "muted" }, t("reg.matched_www", { host: look.host, name: look.matched })) : null,
+        kv([
+          [t("reg.f.status"), pubStatus(e.verdict)],
+          e.brands.length ? [t("reg.f.brand"), e.brands.map(brandLabel).join(", ")] : null,
+          [t("reg.f.first_seen"), when(e.first_seen_at)],
+          [t("reg.f.last_checked"), a.last_checked ? when(a.last_checked, true) : t("reg.not_checked")],
+          [t("reg.f.last_reachable"), a.last_reachable ? when(a.last_reachable, true) : t("reg.never_confirmed")],
+          [t("reg.f.state"), availChip(a.state)],
+        ]),
+        h("p", { class: "reg-note" }, t("reg.note_reachable")), tech(e.name));
+    }
+    return h("section", { class: "card result miss", role: "status" },
+      h("h2", {}, t("reg.missing_title")), h("div", { class: "result-name" }, look.host),
+      h("p", { class: "warnline" }, t("reg.not_safe")),
+      look.known ? h("p", {}, t("reg.known_not_listed"), " ", tech(look.matched)) : null,
+      h("p", { class: "muted" }, t("reg.db_only")));
+  }
+
+  PAGES.analysis = async function overview() {
     const o = await api("overview");
     const v = o.verdicts;
     const dns = o.dns || {};
@@ -377,7 +473,7 @@
       h("div", { class: "grid g-main", style: { "margin-top": "14px" } }, recent,
         h("div", { class: "grid" }, card(t("ov.dns.title"), t("ov.dns.hint"), dnsBar), brands, camps)));
   };
-  PAGES[""].titleKey = "nav.overview";
+  PAGES.analysis.titleKey = "nav.overview";
   function kpi(k, v, sub, color, href) {
     return h("a", { class: "kpi", href, style: { "--kc": color, color: "inherit", "text-decoration": "none" } },
       h("div", { class: "k" }, k), h("div", { class: "v" }, v), h("div", { class: "s" }, sub));
@@ -490,6 +586,29 @@
         { label: t("dd.addresses"), cell: (o) => addrList(o.addresses) },
         { label: t("col.run"), cell: (o) => h("a", { href: `#/run?id=${o.run_id}` }, `#${o.run_id}`) },
       ], d.dns) : empty(t("dd.no_dns")));
+    const av = d.availability, as = av.summary;
+    const prots = [...new Set(av.history.map((o) => o.protection).filter(Boolean))];
+    const availCard = card(t("dd.avail"), t("dd.avail_hint", { n: as.checks }),
+      kv([
+        [t("reg.f.state"), h("span", {}, availChip(as.state), as.last_state && !PUBLIC_OF[as.last_state] ? h("span", { class: "faint" }, ` · ${label("avail.state", as.last_state)}`) : null)],
+        [t("reg.f.last_checked"), as.last_checked ? h("span", { class: "mono" }, `${dt(as.last_checked)} UTC`) : t("reg.not_checked")],
+        [t("reg.f.last_reachable"), as.last_reachable ? h("span", { class: "mono" }, `${dt(as.last_reachable)} UTC`) : t("reg.never_confirmed")],
+        as.previous_reachable ? [t("dd.prev_reachable"), h("span", { class: "mono" }, `${dt(as.previous_reachable)} UTC`)] : null,
+        as.checks ? [t("dd.avail_first"), h("span", { class: "mono" }, `${dt(as.first_checked)} UTC`)] : null,
+        [t("dd.avail_counts"), t("dd.avail_counts_val", { n: n(as.checks), ok: n(as.reachable_checks), bad: n(as.failed_checks) })],
+        prots.length ? [t("dd.protection"), prots.join(", ")] : null,
+      ]),
+      av.history.length ? h("div", { style: { "margin-top": "10px" } }, table([
+        { label: t("col.checked_utc"), cell: (o) => h("span", { class: "mono nowrap" }, dt(o.checked_at)) },
+        { label: "DNS", cell: (o) => label("dns", o.dns) },
+        { label: "TCP", cell: (o) => (o.tcp ? `${label("avail.tcp", o.tcp)}${o.port ? ` :${o.port}` : ""}` : "–") },
+        { label: "TLS", cell: (o) => (o.tls ? label("avail.tls", o.tls) : "–") },
+        { label: "HTTP", cell: (o) => (o.http_status ?? (o.http ? label("avail.http", o.http) : "–")) },
+        { label: t("dd.av.protection"), cell: (o) => protText(o) },
+        { label: t("dd.av.result"), cell: (o) => h("span", {}, stateChip(o.state), o.run_status === "failed" ? h("span", { class: "faint", title: t("dd.av.failed_run") }, " *") : null) },
+        { label: t("dd.av.reason"), cell: (o) => h("span", { class: "muted" }, reasonText(o), o.location ? h("span", { class: "mono faint break", style: { display: "block" } }, `→ ${o.location}`) : null) },
+      ], av.history)) : empty(av.in_registry ? t("dd.avail_none") : t("dd.avail_not_registry")),
+      h("p", { class: "faint", style: { "margin-top": "8px" } }, t("dd.avail_semantics")));
     const inds = card(t("dd.indicators"), t("dd.indicators_hint"),
       d.indicators.length ? table([
         { label: t("col.kind"), cell: (i) => kindLabel(i.kind) },
@@ -514,7 +633,7 @@
         dec ? h("span", { class: "score", style: { color: VCOL[dec.verdict] } }, dec.score) : null,
         dec ? dec.brands.map(brandTag) : null),
       h("div", { class: "grid g-main" }, why, h("div", { class: "grid" }, status, dnsHist)),
-      h("div", { class: "grid", style: { "margin-top": "14px" } }, rels, h("div", { class: "grid g2" }, certs, inds), prov));
+      h("div", { class: "grid", style: { "margin-top": "14px" } }, availCard, rels, h("div", { class: "grid g2" }, certs, inds), prov));
   };
   PAGES.domain.titleKey = "page.domain";
   PAGES.domain.crumbs = (p) => [h("a", { href: "#/domains" }, t("nav.domains")), p.get("name") || ""];
@@ -826,7 +945,7 @@
     return h("div", {},
       h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.collection")), h("p", {}, t("col.intro")))),
       crt.length ? card(t("col.outcomes"), t("col.outcomes_hint"), runStrip(crt.slice(0, 40))) : null,
-      h("div", { class: "filters", style: { "margin-top": "14px" } }, h("div", { class: "grp" }, [["", t("col.all_sources")], ["crtsh", "crt.sh"], ["dns", "DNS"]].map(([k, l]) => h("button", { class: src === k ? "on" : null, onclick: () => go("collection", { source: k }) }, l)))),
+      h("div", { class: "filters", style: { "margin-top": "14px" } }, h("div", { class: "grp" }, [["", t("col.all_sources")], ["crtsh", "crt.sh"], ["dns", "DNS"], ["availability", label("srcshort", "availability")]].map(([k, l]) => h("button", { class: src === k ? "on" : null, onclick: () => go("collection", { source: k }) }, l)))),
       h("section", { class: "card flush" }, table([
         { label: t("col.run"), cell: (r) => h("a", { href: `#/run?id=${r.id}` }, `#${r.id}`) },
         { label: t("col.source"), cell: (r) => label("srcshort", r.source_id) },
@@ -869,6 +988,7 @@
     const r = d.run;
     const cov = r.note?.coverage;
     const isCrt = r.source_id === "crtsh";
+    const isAv = r.source_id === "availability";
     return h("div", {},
       h("div", { class: "hero" }, h("h1", {}, t("run.hero", { id: r.id })), statusChip(r.status), h("span", { class: "muted" }, `${label("srcshort", r.source_id)} · ${dt(r.started_at)} UTC · ${secs(r.duration_s)} · trawl ${r.software_version}`)),
       h("div", { class: "grid g-main" },
@@ -883,14 +1003,25 @@
           { label: t("col.bytes"), num: true, cell: (q) => bytes(q.bytes) },
           { label: t("col.records_new"), num: true, cell: (q) => (q.records === null ? "–" : `${n(q.records)} (${n(q.records_new)})`) },
           { label: t("col.note"), cell: (q) => h("span", { class: "muted" }, tx(q.error || "")) },
-        ], d.queries)) : card(t("run.dns"), t("run.dns_hint", { n: d.dns.length }), table([
+        ], d.queries)) : isAv ? card(t("run.avail"), t("run.avail_hint", { n: d.availability.length }), table([
+          { label: t("col.name"), cls: "dom", cell: (o) => domLink(o.domain) },
+          { label: t("dd.av.result"), cell: (o) => stateChip(o.state) },
+          { label: "HTTP", num: true, cell: (o) => o.http_status ?? "–" },
+          { label: t("dd.av.protection"), cell: (o) => protText(o) },
+          { label: t("dd.av.reason"), cell: (o) => h("span", { class: "muted" }, reasonText(o)) },
+        ], d.availability)) : card(t("run.dns"), t("run.dns_hint", { n: d.dns.length }), table([
           { label: t("col.name"), cls: "dom", cell: (o) => domLink(o.domain) },
           { label: t("col.outcome"), cell: (o) => dnsChip(o.outcome) },
           { label: t("dd.addresses"), cell: (o) => addrList(o.addresses) },
           { label: t("col.error"), cell: (o) => h("span", { class: "muted" }, tx(o.error || "")) },
         ], d.dns)),
         h("div", { class: "grid" },
-          card(t("run.summary"), null, kv([
+          isAv ? card(t("run.summary"), null, kv([
+            [t("col.requested"), n(r.queries_requested)],
+            ...Object.entries(r.note?.states || {}).filter(([, v]) => v).map(([k, v]) => [label("avail.state", k), n(v)]),
+            [t("run.skipped"), n(r.queries_skipped)],
+            [t("run.finished"), h("span", { class: "mono" }, r.finished_at ? `${dt(r.finished_at)} UTC` : "–")],
+          ])) : card(t("run.summary"), null, kv([
             [t("col.requested"), n(r.queries_requested)], [t("run.answered_records"), n(r.queries_ok)], [t("run.answered_empty"), n(r.queries_empty)],
             isCrt ? [t("run.abandoned"), n(r.queries_abandoned)] : null, [t("run.timeouts"), n(r.queries_timeout)], [t("col.failed"), n(r.queries_failed)],
             isCrt ? [t("run.skipped"), n(r.queries_skipped)] : null, [t("run.records_received"), n(r.records_received)], [t("run.records_new"), n(r.records_new)],
@@ -912,7 +1043,7 @@
     return h("div", { class: "prose" },
       h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("meth.title")), h("p", {}, t("meth.intro")))),
       h("div", { class: "explain warn" }, h("b", {}, `${t("disclaimer.title")} `), t("disclaimer.body")),
-      h("h3", {}, t("meth.does")), h("ol", {}, items("meth.does", 5)),
+      h("h3", {}, t("meth.does")), h("ol", {}, items("meth.does", 6)),
       h("h3", {}, t("meth.cannot")), h("ul", {}, items("meth.cannot", 4)),
       h("h3", {}, t("meth.terms")),
       table([{ label: t("meth.term"), cell: (g) => h("b", {}, t(`glossary.${g.id}.term`)) }, { label: t("meth.meaning"), cell: (g) => t(`glossary.${g.id}.text`) }], m.glossary),
@@ -1012,7 +1143,7 @@
     document.getElementById("jump").addEventListener("submit", (e) => {
       e.preventDefault();
       const q = document.getElementById("jump-q").value.trim().toLowerCase();
-      if (q) go("domains", { q, verdict: "likely,possible,lead,weak,legitimate,none" });
+      if (q) go("", { q });
     });
     addEventListener("keydown", (e) => {
       if (e.key === "/" && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) { e.preventDefault(); document.getElementById("jump-q").focus(); }

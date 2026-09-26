@@ -1,7 +1,8 @@
 # Data sources
 
-Every dataset entry comes from one of the two sources below, collected by this
-system itself. Each source is described in the `sources` table and on the Sources
+Every observation comes from one of the three sources below, collected by this
+system itself. The first two are the input of detection; the third is an availability
+history for the public registry and is never an input of detection. Each source is described in the `sources` table and on the Sources
 page, with its health.
 
 ## 1. crt.sh (primary) - Certificate Transparency
@@ -70,7 +71,8 @@ none answered, otherwise `partial`.
 ## 2. DNS re-check (secondary) - host resolver
 
 **What it provides.** Whether a flagged name resolves now, and to which A/AAAA
-addresses. It never connects to the addresses and never fetches content.
+addresses. It never connects to the addresses (the separate availability probe in §3
+does, for registry domains only).
 
 **How.** `getaddrinfo()` through the deployment host's resolver (on the Steam Deck:
 systemd-resolved at 127.0.0.53, forwarding to its configured upstream). The resolver
@@ -90,6 +92,27 @@ infrastructure.
 127.0.0.1, private ranges) and Cloudflare's published anycast ranges are excluded,
 because they are shared by unrelated sites.
 
+## 3. Availability probe - registry domains only
+
+**What it provides.** Whether the infrastructure behind each domain in the public
+registry answered when trawl checked it: DNS result, the address and port contacted,
+TCP, TLS and HTTP results, status code, redirect target (not followed), detected bot
+protection, and a classification with its reason. About once a day per registry
+domain; never for raw certificate names; never because a visitor searched.
+
+**How.** `trawl/sources/probe.py`: one DNS lookup, public addresses only, TCP to that
+exact address (443, else 80), verified TLS with SNI, one `GET /`; at most 16 KiB of
+headers and body read, then discarded. Full method, classification and semantics:
+[AVAILABILITY](AVAILABILITY.md).
+
+**Provenance stored per check:** run, `source_id` and checker version (the method),
+time, duration, every result above, state and reason. Checks are appended, never
+overwritten. The probe's runs and source row are excluded from the analysis dataset,
+so they cannot change a detection or a fingerprint.
+
+**Visibility.** The domain's operator sees the checking host's IP address and the
+User-Agent `trawl-availability/1`.
+
 ## Sources deliberately not used
 
 | Candidate | Why not (now) |
@@ -98,6 +121,7 @@ because they are shared by unrelated sites.
 | Direct CT log tailing | ~27 GB/day per log on a home connection. Upgrade path: a CT stream consumer for live entries, with crt.sh kept for backfill; records are keyed so sources can be mixed. |
 | crt.sh PostgreSQL interface | Would allow "logged since" incremental queries (large bandwidth saving), but needs a PostgreSQL client library - a new dependency. Best next step for collection efficiency. |
 | urlscan.io search | Useful scan metadata, but leading-wildcard search needs an account/API key; adds a credential and a third-party dependency. |
+| External availability services (uptime monitors, URL scanners) | Not needed for trawl's own history; if ever added, a separately labelled source, never merged into trawl's checks. |
 | Passive DNS | No free, openly licensed source with adequate coverage for this corpus. |
 | RDAP / WHOIS | Registration dates and registrars would be strong temporal/registrar indicators; left out of v2 to keep network surface small. Candidate for the next adapter. |
-| Fetching the sites (favicons, analytics IDs, wallets) | Would turn the collector into a visitor of hostile infrastructure. Out of scope by design. Indicators are generic `(kind, value)` pairs, so a future, isolated capture step would add a kind to `correlation.kinds` and an extractor - none exists today. |
+| Rendering or crawling the sites (favicons, analytics IDs, wallets, screenshots) | Would turn the system into a visitor of hostile infrastructure. Out of scope by design: the availability probe reads only the status line and a few headers of `/`, never follows links or redirects and never executes anything. Indicators are generic `(kind, value)` pairs, so a future, isolated capture step would add a kind to `correlation.kinds` and an extractor - none exists today. |

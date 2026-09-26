@@ -43,6 +43,25 @@ DEFAULTS: dict = {
         "timeout_s": 12.0,
         "recheck_hours": 20.0,
     },
+    "availability": {
+        # Checks the public registry (flagged names of the latest analysis), never the
+        # raw CT names. One check = DNS, TCP, TLS, one GET / (sources/probe.py).
+        "enabled": True,
+        "recheck_hours": 20.0,               # ~daily freshness with a 6-hourly cycle
+        "unreachable_after": 3,              # after this many 'unreachable' checks in a row
+        "unreachable_recheck_hours": 68.0,   # ... re-check about every 3 days instead
+        "max_per_run": 500,
+        "workers": 6,
+        "max_run_minutes": 45.0,             # names not started by then are skipped
+        "dns_timeout_s": 8.0,
+        "connect_timeout_s": 6.0,
+        "tls_timeout_s": 8.0,
+        "response_timeout_s": 10.0,
+        "total_timeout_s": 30.0,             # hard limit for one whole check
+        "max_addresses": 2,                  # addresses tried per port
+        "max_header_bytes": 16384,
+        "max_body_bytes": 16384,             # read only to recognise a challenge page
+    },
     "analysis": {
         "keep_derived": 4,           # analyses whose derived rows are kept
     },
@@ -115,6 +134,17 @@ def _validate(cfg: dict) -> None:
             raise ValueError(f"correlation.kinds.{name}: max_df >= 2 and base >= 0 required")
     if cfg["collection"]["pace_s"] < 1:
         raise ValueError("collection.pace_s below 1 s would hammer a free shared service")
+    a = cfg["availability"]
+    if not 1 <= a["workers"] <= 16 or not 1 <= a["max_addresses"] <= 4:
+        raise ValueError("availability.workers must be 1-16 and max_addresses 1-4")
+    if a["recheck_hours"] < 1 or a["unreachable_recheck_hours"] < a["recheck_hours"]:
+        raise ValueError("availability: recheck_hours >= 1 and unreachable_recheck_hours >= it")
+    for k in ("dns_timeout_s", "connect_timeout_s", "tls_timeout_s", "response_timeout_s", "total_timeout_s"):
+        if not 0 < a[k] <= 120:
+            raise ValueError(f"availability.{k} must be in (0, 120] seconds")
+    for k in ("max_header_bytes", "max_body_bytes"):
+        if not 1024 <= a[k] <= 1048576:
+            raise ValueError(f"availability.{k} must be 1 KiB - 1 MiB")
 
 
 def canonical(obj) -> str:

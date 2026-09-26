@@ -147,6 +147,35 @@ check("request body cannot smuggle a second request", resp.count(b"HTTP/1.1 200"
 resp = raw(b"GET /api/meta HTTP/1.0\r\nHost: " + host + b"\r\n\r\n")
 check("HTTP/1.0 request answered normally", b" 200 " in resp[:20], resp[:20])
 
+# -- public registry: a database lookup, never a fetch of what the visitor typed ------------
+import time
+from urllib.parse import quote
+
+r, b = req("GET", "/api/registry?limit=5")
+reg = json.loads(b) if r.status == 200 else {}
+check("registry lists domains with availability and update times",
+      r.status == 200 and reg.get("rows") and "availability" in reg["rows"][0] and "updated" in reg,
+      f"{r.status} total={reg.get('total')}")
+if reg.get("rows"):
+    name = reg["rows"][0]["name"]
+    r, b = req("GET", "/api/lookup?q=" + quote(f"https://{name}/login?x=1"))
+    d = json.loads(b) if r.status == 200 else {}
+    check("lookup reduces a URL to its hostname and finds it", d.get("in_registry") is True
+          and d.get("host") == name, f"{r.status} {d.get('host')}")
+t0 = time.monotonic()
+r, b = req("GET", "/api/lookup?q=" + quote("https://example.com/some/path"))
+d = json.loads(b) if r.status == 200 else {}
+check("lookup of an unlisted name answers from the database (not listed, quickly)",
+      r.status == 200 and d.get("in_registry") is False and time.monotonic() - t0 < 5, f"{r.status}")
+for q in ("http://127.0.0.1:22/", "http://169.254.169.254/latest/meta-data/", "http://[::1]/",
+          "file:///etc/passwd", "gopher://localhost:25/", "10.0.0.1", "<script>alert(1)</script>",
+          "a%0d%0aX-Injected:%201"):
+    r, b = req("GET", "/api/lookup?q=" + quote(q))
+    check(f"lookup refuses non-domain input: {q[:30]}", r.status == 400 and b"<script>" not in b.lower()
+          and r.getheader("X-Injected") is None, f"{r.status} {b[:50]!r}")
+r, b = req("GET", "/api/registry?limit=1000")
+check("registry page size validated", r.status == 400, r.status)
+
 r, b = req("GET", "/api/meta")
 if r.status == 200:
     meta = json.loads(b)

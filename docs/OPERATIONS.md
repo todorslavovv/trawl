@@ -3,7 +3,7 @@
 ## Requirements
 
 Python 3.11+ (standard library only). Tested on Python 3.12 (development PC) and 3.13
-(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.1.2.
+(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.2.0.
 
 ## Configuration
 
@@ -24,6 +24,12 @@ Defaults are in `trawl/config.py`. Override any subset with a JSON file passed a
 | `collection.exclude_expired` | true | query only unexpired certificates (crt.sh caps full-history answers to the oldest rows) |
 | `collection.truncation_min_records` / `truncation_stale_days` | 1000 / 45 | a large answer whose newest certificate is stale is recorded as truncated |
 | `dns.max_per_run` / `workers` / `timeout_s` / `recheck_hours` | 600 / 8 / 12 / 20 | DNS re-check |
+| `availability.enabled` | true | availability step in the cycle |
+| `availability.recheck_hours` | 20 | a registry name is due when its last check is older (≈ daily) |
+| `availability.unreachable_after` / `unreachable_recheck_hours` | 3 / 68 | after 3 unreachable checks in a row, re-check about every 3 days |
+| `availability.max_per_run` / `workers` / `max_run_minutes` | 500 / 6 / 45 | load limits; names not started in time are skipped |
+| `availability.dns_timeout_s` / `connect_timeout_s` / `tls_timeout_s` / `response_timeout_s` / `total_timeout_s` | 8 / 6 / 8 / 10 / 30 | per-phase limits and the hard limit per check |
+| `availability.max_addresses` / `max_header_bytes` / `max_body_bytes` | 2 / 16384 / 16384 | addresses tried per port; read caps |
 | `analysis.keep_derived` | 4 | analyses whose derived rows are kept |
 | `snapshots.interval_hours` / `keep` | 24 / 14 | snapshot cadence and retention |
 | `correlation.*` | see [CORRELATION](CORRELATION.md) | recorded (with SHA-256) in every analysis |
@@ -35,7 +41,8 @@ python3 -m trawl [--config F] [--db PATH] <command>
   collect  [--force] [--keywords k ...]   one crt.sh collection run
   dnscheck                                re-resolve flagged names
   analyze                                 score + correlate; records provenance
-  cycle    [--force]                      collect -> dnscheck -> analyze -> snapshot if due
+  cycle    [--force]                      collect -> dnscheck -> analyze -> availability -> snapshot if due
+  availability [--force]                  check the registry domains that are due (all with --force)
   snapshot [--analysis N] [--out DIR]     export a fingerprinted dataset
   verify   MANIFEST                       check snapshot hashes (exit 1 on mismatch)
   replay   MANIFEST                       rebuild + re-run; exit 1 unless reproduced
@@ -44,7 +51,7 @@ python3 -m trawl [--config F] [--db PATH] <command>
   serve    [--host 127.0.0.1] [--port 8790]   read-only UI + API
 ```
 
-Writers (`collect`, `dnscheck`, `analyze`, `cycle`, `snapshot`) take an exclusive
+Writers (`collect`, `dnscheck`, `analyze`, `cycle`, `availability`, `snapshot`) take an exclusive
 lock (`<db>.lock`); a second writer is refused immediately with one line on stderr
 (`refused: another trawl writer is running (lock held)`) and exit status 2. On start, runs left `running`
 by a killed process are marked `interrupted`.
@@ -68,7 +75,7 @@ ssh deck@steamdeck-1 'systemctl --user enable --now trawl-tunnel.service'   # pu
 
 | Unit | What |
 |---|---|
-| `trawl-cycle.service` + `.timer` | one cycle every 6 h (`OnUnitActiveSec=6h`, `Persistent=true`); sandboxed (`ProtectSystem=strict`, write access only to `~/trawl-data`, `NoNewPrivileges`, `PrivateTmp`) |
+| `trawl-cycle.service` + `.timer` | one cycle every 6 h (`OnUnitActiveSec=6h`, `Persistent=true`): collection, DNS re-check, analysis, availability checks of due registry domains, snapshot if due; sandboxed (`ProtectSystem=strict`, write access only to `~/trawl-data`, `NoNewPrivileges`, `PrivateTmp`) |
 | `trawl-web.service` | `serve --host 127.0.0.1 --port 8790`; same sandboxing |
 | `trawl-tunnel.service` | `~/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790`; `Wants=trawl-web.service` (not `Requires=`), so a web restart does not restart the tunnel; sandboxed (read-only home, private `/dev`, restricted address families, system-call filter) |
 

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import crtsh, dns
+from . import crtsh, dns, probe
 
-ADAPTERS = (crtsh, dns)
+ADAPTERS = (crtsh, dns, probe)
 
 
 def register_all(conn: sqlite3.Connection) -> None:

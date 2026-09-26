@@ -37,8 +37,9 @@ Stated plainly, so that nothing on the site or in a report is read as more than 
 
 ## What it cannot establish
 
-* **Maliciousness.** The system never visits a site. A certificate for a look-alike
-  name is a signal; it is not proof that a phishing page was ever served.
+* **Maliciousness.** The system never renders a site; the availability check records
+  only whether and how `/` answered. A certificate for a look-alike name is a signal;
+  it is not proof that a phishing page was ever served.
 * **Operators or people.** A campaign is a hypothesis about shared infrastructure.
   Shared registrable domains and certificates indicate common *control*; shared
   addresses and naming patterns are weaker. None of it identifies anyone.
@@ -46,6 +47,26 @@ Stated plainly, so that nothing on the site or in a report is read as more than 
   false positive found in the beta tools; correlation is measured against synthetic
   ground truth (precision 1.00, recall 0.78). No labelled Bulgarian dataset exists to
   measure either on real data.
+
+## Availability semantics
+
+* **Reachable means "something answered"** at the domain's address - a normal page, a
+  redirect, a 403, a 404, a rate limit or a bot-protection challenge. It never means
+  the phishing content was seen, and a challenge is never bypassed.
+* **Unreachable is one failed check from one place.** NXDOMAIN, no address, a sinkhole
+  or refused connections at that moment; the site may return or answer other networks.
+* **Undetermined is common and honest.** Timeouts, TLS problems (expired or wrong
+  certificates) and 5xx answers - e.g. Cloudflare 521 "origin down" - are not called
+  reachable or unreachable. On the first production run (2026-09-26, 335 domains):
+  204 reachable, 35 unreachable, 96 undetermined (30 timeouts, 37 TLS errors,
+  28 server errors, 1 network error).
+* **One vantage point, once a day.** Checks come from the deployment host only, at
+  most about daily per domain; geo-, time- or client-dependent behaviour is not seen,
+  and nothing is known between checks.
+* **Visible to operators.** Each check reveals the checking host's IP address and a
+  research User-Agent; an operator can block or cloak it, which shows up as a 403,
+  challenge or timeout.
+* **Port 443, then 80 only.** Services on other ports are not considered.
 
 ## Known weaknesses of the rules
 

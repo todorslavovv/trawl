@@ -3,6 +3,7 @@ no stack traces, and every API route answering for real data."""
 import http.client
 import json
 import threading
+import urllib.parse
 
 import pytest
 
@@ -207,3 +208,58 @@ def test_malformed_requests_get_headers_and_no_reflection(server, payload):
     assert json.loads(body) == {"error": "bad request"}
     assert b"<script" not in data.lower() and b"alert(1)" not in data
     assert b"NOT-HTTP" not in data and b"<html" not in data.lower()
+
+
+# -- public registry ---------------------------------------------------------------------
+def test_registry_lists_the_flagged_names_with_availability(server):
+    st, d = j(server, "/api/registry?limit=100")
+    assert st == 200
+    assert d["total"] == len(d["rows"]) > 0
+    assert {r["verdict"] for r in d["rows"]} <= {"likely", "possible", "lead"}
+    assert all(r["availability"]["state"] == "unchecked" for r in d["rows"])
+    assert set(d["updated"]) == {"analysis_at", "collected_at", "availability_at"}
+    assert j(server, "/api/registry?limit=101")[0] == 400
+
+
+def test_lookup_accepts_names_and_urls(server):
+    name = j(server, "/api/registry?limit=1")[1]["rows"][0]["name"]
+    for q in (name, name.upper(), f"https://{name}/login?x=1", f"http://{name}:8080/a/b", f"{name}/path"):
+        st, d = j(server, "/api/lookup?q=" + urllib.parse.quote(q))
+        assert st == 200 and d["in_registry"] and d["entry"]["name"] == name, q
+        assert d["entry"]["availability"]["state"] == "unchecked"
+    d = j(server, "/api/lookup?q=" + urllib.parse.quote(f"https://www.{name}/"))[1]
+    assert d["in_registry"] and d["matched"] == name and d["host"] == f"www.{name}"
+    d = j(server, "/api/lookup?q=not-in-the-registry.example")[1]
+    assert (d["in_registry"], d["known"], d["host"]) == (False, False, "not-in-the-registry.example")
+
+
+@pytest.mark.parametrize("q", ["", "http://127.0.0.1/", "http://169.254.169.254/latest/meta-data/",
+                               "http://[::1]:8790/", "file:///etc/passwd", "javascript:alert(1)",
+                               "<script>alert(1)</script>", "a" * 1200, "10.0.0.1", "%0d%0aX-Injected: 1"])
+def test_lookup_rejects_what_is_not_a_domain(server, q):
+    r, body = req(server, "/api/lookup?q=" + urllib.parse.quote(q))
+    assert r.status in (400, 414) and "<" not in body.decode()
+
+
+def test_registry_lookup_never_touches_the_network(server_cfg, monkeypatch):
+    import socket as S
+
+    from trawl.server import Api
+    api = Api(server_cfg["db_path"])
+    name = api.registry({})["rows"][0]["name"]
+
+    def boom(*a, **k):
+        raise AssertionError("the lookup opened a network connection")
+    monkeypatch.setattr(S, "getaddrinfo", boom)
+    monkeypatch.setattr(S, "create_connection", boom)
+    monkeypatch.setattr(S.socket, "connect", boom)
+    for q in (f"https://{name}/login", "http://example.com/", "unknown-name.example"):
+        api.lookup({"q": [q]})
+    assert api.lookup({"q": [name]})["in_registry"]
+
+
+def test_domain_detail_carries_availability(server):
+    name = j(server, "/api/registry?limit=1")[1]["rows"][0]["name"]
+    d = j(server, f"/api/domain?name={name}")[1]
+    assert d["availability"]["in_registry"] and d["availability"]["history"] == []
+    assert d["availability"]["summary"]["state"] == "unchecked"

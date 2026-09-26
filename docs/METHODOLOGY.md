@@ -6,7 +6,8 @@ Domain names that appear in publicly logged TLS certificates and look like they
 impersonate one of the tracked Bulgarian brands (couriers, МВР e-services, TollPass /
 e-vignette, banks, Paysera), plus "leads": names with Bulgarian lure wording on
 high-abuse infrastructure but no brand. It then proposes which of those names appear
-to share infrastructure.
+to share infrastructure. The flagged names form the **public registry**; for each,
+trawl keeps a history of whether its infrastructure answered a daily check.
 
 ## Levels of claim
 
@@ -14,7 +15,7 @@ The system keeps five levels distinct, in code, API and UI:
 
 | Level | Meaning | Example |
 |---|---|---|
-| **Observation** | A recorded fact about a public record, with its source and time | crt.sh returned certificate 29522075310 listing `econt-pay.top` in run 4; the resolver answered NXDOMAIN at 2026-09-27 03:10 UTC |
+| **Observation** | A recorded fact about a public record, with its source and time | crt.sh returned certificate 29522075310 listing `econt-pay.top` in run 4; the resolver answered NXDOMAIN at 2026-09-27 03:10 UTC; the availability check got HTTP 403 from a Cloudflare challenge at 2026-09-27 03:12 UTC |
 | **Signal** | A named rule that fired on a name, with points and the text it matched | `tld_high +20 (.top)` |
 | **Relationship** | Two flagged names sharing indicators; accepted only under the corroboration rules | `kit_shape B.X4.cam + issuance_day 2026-07-28` |
 | **Campaign hypothesis** | A connected group of accepted relationships | `C-1f0e...`, tier `corroborated` |
@@ -41,13 +42,16 @@ of common ownership.
    ([SCORING](SCORING.md)); build indicators for flagged names and correlate them
    ([CORRELATION](CORRELATION.md)); write results; record the dataset and results
    fingerprints ([PROVENANCE](PROVENANCE.md)).
-5. **Snapshot** (`snapshot`, daily in the cycle). Export the exact input dataset of an
+5. **Availability** (`availability`, in the cycle). Check the registry names that
+   are due (about daily each): DNS, TCP, TLS, one `GET /`; append one observation per
+   check. Not an input of step 4. See [AVAILABILITY](AVAILABILITY.md).
+6. **Snapshot** (`snapshot`, daily in the cycle). Export the exact input dataset of an
    analysis, with a manifest that a third party can verify and replay.
 
 ## What it cannot establish
 
-See [LIMITATIONS](LIMITATIONS.md). In short: that a site is malicious (it is never
-visited), who operates anything, completeness of coverage (certificate search misses
+See [LIMITATIONS](LIMITATIONS.md). In short: that a site is malicious (pages are never
+rendered; the availability check only records whether something answered), who operates anything, completeness of coverage (certificate search misses
 HTTP-only phishing, compromised sites and wildcard-hidden subdomains, and crt.sh
 abandons some queries), and real-world accuracy (no labelled Bulgarian ground truth
 exists; the rules are tested on known examples and synthetic campaigns).

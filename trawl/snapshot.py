@@ -24,9 +24,14 @@ from . import VERSION
 from .config import canonical
 from .db import connect, utcnow
 
+# Only the sources an analysis reads. Availability checks (sources/probe.py) are an
+# observation layer beside the analysis: their source row and runs are not part of the
+# dataset, so they can never change a dataset or results fingerprint.
+ANALYSIS_SOURCES = ("crtsh", "dns")
+_IN = "('" + "','".join(ANALYSIS_SOURCES) + "')"
 _SELECTS = (
-    ("source", "SELECT id, kind, endpoint FROM sources ORDER BY id", None),
-    ("run", "SELECT * FROM collection_runs WHERE id <= :run ORDER BY id", "run"),
+    ("source", f"SELECT id, kind, endpoint FROM sources WHERE id IN {_IN} ORDER BY id", None),
+    ("run", f"SELECT * FROM collection_runs WHERE id <= :run AND source_id IN {_IN} ORDER BY id", "run"),
     ("query", "SELECT * FROM queries WHERE run_id <= :run ORDER BY id", "run"),
     ("record", "SELECT id, source_id, record_key, external_id, run_id, query_id, fetched_at,"
                " payload, payload_sha256 FROM source_records WHERE id <= :record ORDER BY id",

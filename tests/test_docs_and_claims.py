@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 WEB = ROOT / "trawl" / "web"
 REQUIRED_DOCS = ["ARCHITECTURE", "DATA_SOURCES", "METHODOLOGY", "SCORING", "CORRELATION",
-                 "PROVENANCE", "OPERATIONS", "SECURITY", "LIMITATIONS"]
+                 "AVAILABILITY", "PROVENANCE", "OPERATIONS", "SECURITY", "LIMITATIONS"]
 
 
 def test_all_required_documents_exist():
@@ -161,13 +161,17 @@ def test_no_dependency_on_the_beta_projects():
             assert f"/{beta}/" not in text, (p, beta)
 
 
-def test_the_only_http_destination_is_crtsh():
+def test_network_code_lives_in_exactly_two_adapters():
+    # crt.sh (one fixed HTTPS origin) and the availability probe (vetted public addresses
+    # of registry domains). Nothing else - above all not the web server - connects out.
     hits = []
     for p in (ROOT / "trawl").rglob("*.py"):
         text = p.read_text()
-        if "urlopen" in text or "http.client" in text or "socket.create_connection" in text:
+        if any(x in text for x in ("urlopen", "http.client", "create_connection", "socket.socket(")):
             hits.append(p.name)
-    assert hits == ["crtsh.py"]
+    assert sorted(hits) == ["crtsh.py", "probe.py"]
+    server = (ROOT / "trawl" / "server.py").read_text()
+    assert not re.search(r"\bprobe\.|check_many|\bAV\.run\b|getaddrinfo|create_connection", server)
 
 
 def test_web_restart_does_not_restart_the_tunnel():
