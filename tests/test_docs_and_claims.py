@@ -140,12 +140,17 @@ def test_no_detectopod_in_code_data_or_config():
             continue
         if p.parent == DOCS or p.name in ("README.md", "test_docs_and_claims.py"):
             continue          # historical mentions in documentation are allowed
-        if p == WEB / "app.js":
-            continue          # Methodology page states the independence, naming the feed
+        if p == WEB / "i18n.json":
+            continue          # checked key by key below
         if "detectopod" in p.read_text(errors="ignore").lower():
             offenders.append(str(p))
     assert offenders == []
     assert not list(ROOT.rglob("seed_*"))
+    # The UI names the old feed only in the Methodology page's independence statement.
+    import json
+    i18n = json.loads((WEB / "i18n.json").read_text(encoding="utf-8"))
+    mentions = {(lang, k) for lang in ("bg", "en") for k, v in i18n[lang].items() if "detectopod" in v.lower()}
+    assert mentions == {("bg", "meth.independence_text"), ("en", "meth.independence_text")}
 
 
 def test_no_dependency_on_the_beta_projects():

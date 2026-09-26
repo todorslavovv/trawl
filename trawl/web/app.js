@@ -3,14 +3,62 @@
  * setAttribute on a fixed attribute name. There is no innerHTML, no eval, and the
  * only URLs built from data are same-origin hash routes (encodeURIComponent) and
  * crt.sh links built from integer ids.
+ *
+ * Language: Bulgarian by default, English as the alternative. Every user-visible
+ * string comes from /i18n.json. Data (domain names, hashes, rule ids, indicator
+ * values) is never translated. Evidence sentences produced by the analysis are
+ * stored in English; in Bulgarian they are rendered through the pattern table in
+ * i18n.json, so the stored evidence - and its fingerprints - never change.
  */
 "use strict";
 (() => {
   const SVGNS = "http://www.w3.org/2000/svg";
   const view = document.getElementById("view");
   const tip = document.getElementById("tip");
+  const LANGS = ["bg", "en"];
   let META = null;
+  let I18N = null;
+  let PATTERNS = [];
+  let LANG = "bg";
   let renderToken = 0;
+
+  // ---------------------------------------------------------------- language
+  function savedLang() {
+    try { const v = localStorage.getItem("trawl.lang"); return LANGS.includes(v) ? v : "bg"; } catch { return "bg"; }
+  }
+  function t(key, params) {
+    let s = I18N?.[LANG]?.[key] ?? I18N?.en?.[key] ?? key;
+    if (params) s = s.replace(/\{(\w+)\}/g, (m, k) => (params[k] === undefined || params[k] === null ? m : String(params[k])));
+    return s;
+  }
+  // Translate an English evidence sentence produced by the analysis (Bulgarian only).
+  function tx(text) {
+    if (text === null || text === undefined || text === "") return text ?? "";
+    if (LANG === "en") return String(text);
+    const kinds = (s) => s.replace(/\{kinds:([^}]*)\}/g, (_, list) => list.split(", ").map((k) => label("kind", k)).join(", "));
+    const match = (s) => {
+      for (const [re, rep] of PATTERNS) if (re.test(s)) return kinds(brandNames(s.replace(re, rep)));
+      return null;
+    };
+    // Whole sentence first (some contain "; "), then the "; "-joined parts that
+    // multi-brand details are built from.
+    const whole = match(String(text));
+    if (whole !== null) return whole;
+    return String(text).split("; ").map((part) => match(part) ?? brandNames(I18N.phrases_bg?.[part] ?? part)).join("; ");
+  }
+  function brandNames(s) {
+    let out = s;
+    // longer phrases first (namesake descriptions contain brand names)
+    for (const [en, bg] of Object.entries(I18N.phrases_bg || {})) out = out.split(en).join(bg);
+    if (!META) return out;
+    for (const [id, b] of Object.entries(META.brands)) {
+      const bg = I18N?.bg?.[`brand.${id}`];
+      if (bg) out = out.split(b.label).join(bg);
+    }
+    return out;
+  }
+  const label = (group, id) => (id === null || id === undefined ? "–" : (I18N?.[LANG]?.[`${group}.${id}`] ?? I18N?.en?.[`${group}.${id}`] ?? String(id)));
+  const brandLabel = (id) => label("brand", id) === id ? (META?.brands?.[id]?.label || id) : label("brand", id);
 
   // ---------------------------------------------------------------- dom helpers
   function setAttrs(el, attrs) {
@@ -35,37 +83,41 @@
   const s = (tag, attrs, ...kids) => { const el = document.createElementNS(SVGNS, tag); setAttrs(el, attrs); return add(el, kids); };
 
   // ---------------------------------------------------------------- formatting
-  const fmt = new Intl.NumberFormat("en-GB");
+  let fmt = new Intl.NumberFormat("bg-BG");
   const n = (x) => (x === null || x === undefined ? "–" : fmt.format(x));
-  const pct = (x) => (x === null || x === undefined ? "–" : `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`);
+  const dec2 = (x) => (x === null || x === undefined ? "–" : new Intl.NumberFormat(LANG === "bg" ? "bg-BG" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x));
+  const pct = (x) => (x === null || x === undefined ? "–" : `${new Intl.NumberFormat(LANG === "bg" ? "bg-BG" : "en-GB", { maximumFractionDigits: x < 0.1 ? 1 : 0 }).format(x * 100)}%`);
   const day = (iso) => (iso ? String(iso).slice(0, 10) : "–");
   const dt = (iso) => (iso ? String(iso).replace("T", " ").slice(0, 16) : "–");
   const short = (sha, k = 12) => (sha ? String(sha).slice(0, k) : "–");
   function ago(iso) {
     if (!iso) return "–";
-    const t = Date.parse(String(iso).length <= 19 ? iso + "Z" : iso);
-    if (Number.isNaN(t)) return "–";
-    const d = (Date.now() - t) / 1000;
-    if (d < 90) return "just now";
-    if (d < 5400) return `${Math.round(d / 60)} min ago`;
-    if (d < 172800) return `${Math.round(d / 3600)} h ago`;
-    return `${Math.round(d / 86400)} d ago`;
+    const tt = Date.parse(String(iso).length <= 19 ? iso + "Z" : iso);
+    if (Number.isNaN(tt)) return "–";
+    const d = (Date.now() - tt) / 1000;
+    if (d < 90) return t("time.just_now");
+    if (d < 5400) return t("time.min_ago", { n: Math.round(d / 60) });
+    if (d < 172800) return t("time.h_ago", { n: Math.round(d / 3600) });
+    return t("time.d_ago", { n: Math.round(d / 86400) });
   }
-  const secs = (x) => (x === null || x === undefined ? "–" : x < 90 ? `${x.toFixed(0)} s` : x < 5400 ? `${(x / 60).toFixed(1)} min` : `${(x / 3600).toFixed(1)} h`);
+  const secs = (x) => (x === null || x === undefined ? "–" : x < 90 ? t("unit.s", { n: x.toFixed(0) }) : x < 5400 ? t("unit.min", { n: (x / 60).toFixed(1) }) : t("unit.h", { n: (x / 3600).toFixed(1) }));
   const bytes = (b) => (b === null || b === undefined ? "–" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} kB` : `${(b / 1048576).toFixed(1)} MB`);
+  const issuerShort = (name) => (name || "").replace(/^.*CN=/, "");
 
   const VCOL = { likely: "var(--likely)", possible: "var(--possible)", lead: "var(--lead)", weak: "var(--weak)", none: "var(--none)", legitimate: "var(--legit)" };
-  const DNS_LABEL = { resolved: "resolving", nxdomain: "NXDOMAIN", no_address: "no address", temporary_failure: "lookup failed", failure: "lookup failed", timeout: "lookup timeout", unchecked: "not checked" };
 
-  const chip = (cls, label, title) => h("span", { class: `chip ${cls}`, title }, label);
-  const verdictChip = (v) => chip(`v-${v}`, v, META?.verdicts?.[v]);
-  const dnsChip = (o) => { const k = o || "unchecked"; return h("span", { class: `nowrap d-${k}` }, h("span", { class: "dot" }), DNS_LABEL[k] || k); };
-  const tierChip = (t) => chip(`t-${t}`, t);
-  const statusChip = (st) => h("span", { class: `nowrap s-${st}` }, h("span", { class: "dot" }), st);
-  const tag = (t, title) => h("span", { class: "tag", title }, t);
+  const chip = (cls, text, title) => h("span", { class: `chip ${cls}`, title }, text);
+  const verdictChip = (v) => chip(`v-${v}`, label("verdict", v), label("verdict_text", v));
+  const dnsChip = (o) => { const k = o || "unchecked"; return h("span", { class: `nowrap d-${k}`, title: o || "" }, h("span", { class: "dot" }), label("dns", k)); };
+  const tierChip = (x) => chip(`t-${x}`, label("tier", x), label("tier_text", x));
+  const statusChip = (st) => h("span", { class: `nowrap s-${st}` }, h("span", { class: "dot" }), label("status", st));
+  const tag = (x, title) => h("span", { class: "tag", title }, x);
   const domLink = (name) => h("a", { href: `#/domain?name=${encodeURIComponent(name)}` }, name);
   const campLink = (id) => h("a", { class: "mono", href: `#/campaign?id=${encodeURIComponent(id)}` }, id);
-  const crtLink = (id) => h("a", { href: `https://crt.sh/?id=${Number(id)}`, target: "_blank", rel: "noopener noreferrer", class: "mono", title: "Open this record on crt.sh (leaves this site)" }, `crt.sh/${Number(id)} ↗`);
+  const crtLink = (id) => h("a", { href: `https://crt.sh/?id=${Number(id)}`, target: "_blank", rel: "noopener noreferrer", class: "mono", title: t("link.crtsh_title") }, `crt.sh/${Number(id)} ↗`);
+  const kindLabel = (k) => h("span", { title: k }, label("kind", k));
+  const addrList = (addrs) => (addrs && addrs.length ? h("div", { class: "addr-list" }, addrs.map((a) => h("div", {}, a))) : "–");
+  const brandTag = (b) => tag(brandLabel(b), b);
   function scoreBar(score, verdict) {
     return h("span", { class: "scorebar" }, h("span", { class: "mono" }, score),
       h("i", {}, h("b", { style: { width: `${Math.max(2, score)}%`, "--c": VCOL[verdict] || "var(--accent)" } })));
@@ -75,17 +127,26 @@
   }
   const empty = (msg) => h("div", { class: "empty" }, msg);
   function table(cols, rows, opts = {}) {
+    // Column names for the stacked phone layout; the domain column is the record title.
+    const labelText = cols.map((c) => (c.cls === "dom" ? null
+      : typeof c.label === "string" ? c.label : (c.label?.textContent || "").replace(/[↑↓]/g, "").trim() || null));
     const thead = h("thead", {}, h("tr", {}, cols.map((c) => h("th", { class: c.num ? "num" : null, title: c.title }, c.label))));
     const tbody = h("tbody", {}, rows.map((r) => {
       const tr = h("tr", { class: [opts.rowClass?.(r), opts.onRow ? "link" : null].filter(Boolean).join(" ") || null },
-        cols.map((c) => h("td", { class: [c.num ? "num" : null, c.cls].filter(Boolean).join(" ") || null }, c.cell(r))));
+        cols.map((c, i) => h("td", { class: [c.num ? "num" : null, c.cls].filter(Boolean).join(" ") || null, "data-label": labelText[i] }, c.cell(r))));
       if (opts.onRow) tr.addEventListener("click", (e) => { if (!e.target.closest("a")) opts.onRow(r); });
       return tr;
     }));
-    return h("div", { class: "tbl-wrap" }, h("table", {}, thead, tbody), rows.length ? null : empty(opts.empty || "Nothing to show."));
+    return h("div", { class: "tbl-wrap" }, h("table", {}, thead, tbody), rows.length ? null : empty(opts.empty || t("empty.default")));
   }
   function kv(pairs) {
     return h("dl", { class: "kv" }, pairs.filter(Boolean).map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
+  }
+  function pager(total, offset, size, onPrev, onNext, what) {
+    return h("div", { class: "pager" },
+      h("span", {}, t("pager.showing", { total: n(total), what, from: total ? offset + 1 : 0, to: Math.min(offset + size, total) })),
+      h("span", {}, h("button", { class: "btn", disabled: offset === 0 ? true : null, onclick: onPrev }, t("pager.prev")), " ",
+        h("button", { class: "btn", disabled: offset + size >= total ? true : null, onclick: onNext }, t("pager.next"))));
   }
 
   // tooltips
@@ -93,13 +154,14 @@
     el.addEventListener("mouseenter", () => { tip.replaceChildren(content()); tip.hidden = false; });
     el.addEventListener("mousemove", (e) => {
       const w = tip.offsetWidth, hgt = tip.offsetHeight;
-      tip.style.left = `${Math.min(e.clientX + 14, innerWidth - w - 8)}px`;
-      tip.style.top = `${Math.min(e.clientY + 14, innerHeight - hgt - 8)}px`;
+      tip.style.left = `${Math.max(4, Math.min(e.clientX + 14, innerWidth - w - 8))}px`;
+      tip.style.top = `${Math.max(4, Math.min(e.clientY + 14, innerHeight - hgt - 8))}px`;
     });
     el.addEventListener("mouseleave", () => { tip.hidden = true; });
   }
 
   // ---------------------------------------------------------------- api + routing
+  class ApiError extends Error {}
   async function api(path, params = {}) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") qs.set(k, v);
@@ -107,7 +169,7 @@
     const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" });
     let j;
     try { j = await r.json(); } catch { j = { error: `HTTP ${r.status}` }; }
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    if (!r.ok) throw new ApiError(j.error || `HTTP ${r.status}`);
     return j;
   }
   function parseHash() {
@@ -130,19 +192,18 @@
     collection: "M3 16l4-6 3 3 4-7 3 4M3 3v14h14",
     methodology: "M5 3h8l3 3v11H5zM8 9h6M8 12h6M8 15h4",
   };
-  const NAV = [["", "Overview", "overview"], ["domains", "Domains", "domains"], ["certificates", "Certificates", "certificates"],
-    ["campaigns", "Campaigns", "campaigns"], ["timeline", "Timeline", "timeline"], null,
-    ["sources", "Sources", "sources"], ["collection", "Collection", "collection"], ["methodology", "About / Methodology", "methodology"]];
+  const NAV = [["", "overview"], ["domains", "domains"], ["certificates", "certificates"], ["campaigns", "campaigns"],
+    ["timeline", "timeline"], null, ["sources", "sources"], ["collection", "collection"], ["methodology", "methodology"]];
   const SECTION_OF = { domain: "domains", certificate: "certificates", campaign: "campaigns", run: "collection" };
 
   function buildNav() {
     const nav = document.getElementById("nav");
     nav.replaceChildren(...NAV.map((item) => {
       if (!item) return h("div", { class: "sep" });
-      const [path, label, icon] = item;
+      const [path, icon] = item;
       return h("a", { href: `#/${path}`, "data-p": path },
         s("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" }, s("path", { d: ICONS[icon], fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" })),
-        label);
+        t(`nav.${icon}`));
     }));
   }
   function setNav(path, crumbs) {
@@ -151,37 +212,42 @@
     const c = document.getElementById("crumbs");
     c.replaceChildren(...(crumbs || []).flatMap((x, i) => [i ? " / " : null, i === crumbs.length - 1 ? h("b", {}, x) : x]).filter((x) => x !== null));
   }
+  function errorBox(e) {
+    const msg = String(e?.message || e);
+    return h("div", { class: "errbox" }, h("b", {}, t("error.load")), " ", e instanceof ApiError ? tx(msg) : h("span", { class: "mono" }, msg));
+  }
 
   async function render() {
     const { path, params } = parseHash();
     const page = PAGES[path] || notFound;
     const token = ++renderToken;
-    setNav(path, [page.title || "trawl"]);
-    view.replaceChildren(h("div", { class: "loading" }, "Loading"));
+    const title = page.titleKey ? t(page.titleKey) : "trawl";
+    setNav(path, [title]);
+    document.title = `${title} · trawl`;
+    view.replaceChildren(h("div", { class: "loading" }, t("loading")));
     try {
       const node = await page(params);
       if (token !== renderToken) return;
       view.replaceChildren(node);
       view.style.animation = "none"; void view.offsetWidth; view.style.animation = "";
       if (page.crumbs) setNav(path, page.crumbs(params));
-      window.scrollTo(0, 0);
     } catch (e) {
       if (token !== renderToken) return;
-      view.replaceChildren(h("div", { class: "errbox" }, h("b", {}, "Could not load this view. "), String(e.message || e)));
+      view.replaceChildren(errorBox(e));
     }
   }
 
   // ---------------------------------------------------------------- charts
-  function stackedBars({ data, keys, colors, height = 150, label, tipFor, onClick }) {
+  function stackedBars({ data, keys, colors, height = 150, xlabel, tipFor, onClick, aria }) {
     const W = 760, H = height, padL = 30, padB = 18, padT = 6;
     const max = Math.max(1, ...data.map((d) => keys.reduce((a, k) => a + (d[k] || 0), 0)));
     const nice = niceMax(max);
     const bw = Math.min((W - padL) / Math.max(1, data.length), 34);   // few bars stay bars
     const y = (v) => H - padB - (v / nice) * (H - padB - padT);
-    const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img" });
-    for (const t of [0, nice / 2, nice]) {
-      svg.append(s("line", { class: "grid-l", x1: padL, x2: W, y1: y(t), y2: y(t) }));
-      svg.append(s("text", { x: padL - 6, y: y(t) + 3, "text-anchor": "end" }, n(Math.round(t))));
+    const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": aria || "" });
+    for (const tv of [0, nice / 2, nice]) {
+      svg.append(s("line", { class: "grid-l", x1: padL, x2: W, y1: y(tv), y2: y(tv) }));
+      svg.append(s("text", { x: padL - 6, y: y(tv) + 3, "text-anchor": "end" }, n(Math.round(tv))));
     }
     data.forEach((d, i) => {
       const g = s("g", { class: "col" });
@@ -195,7 +261,7 @@
       g.append(s("rect", { x: padL + i * bw, width: bw, y: padT, height: H - padB - padT, fill: "transparent" }));
       if (tipFor) tipOn(g, () => tipFor(d));
       if (onClick) { g.style.cursor = "pointer"; g.addEventListener("click", () => onClick(d)); }
-      const lab = label?.(d, i);
+      const lab = xlabel?.(d, i);
       if (lab) svg.append(s("text", { x: padL + i * bw + bw / 2, y: H - 4, "text-anchor": "middle" }, lab));
       svg.append(g);
     });
@@ -207,7 +273,7 @@
     return 10 * p;
   }
   function legend(items) {
-    return h("div", { class: "legend" }, items.map(([label, color]) => h("span", {}, h("i", { style: { background: color } }), label)));
+    return h("div", { class: "legend" }, items.map(([text, color]) => h("span", {}, h("i", { style: { background: color } }), text)));
   }
   function hbars(rows, keys, colors, labelFor, hrefFor) {
     const max = Math.max(1, ...rows.map((r) => keys.reduce((a, k) => a + (r[k] || 0), 0)));
@@ -217,7 +283,7 @@
       const row = h("div", { class: "hbar" }, h("span", { class: "nowrap", style: { overflow: "hidden", "text-overflow": "ellipsis" } }, lab),
         h("span", { class: "track" }, keys.map((k) => h("span", { style: { width: `${((r[k] || 0) / max) * 100}%`, background: colors[k], "animation-delay": `${i * 30}ms` } }))),
         h("span", { class: "num mono" }, n(tot)));
-      tipOn(row, () => h("div", {}, h("b", {}, labelFor(r)), keys.map((k) => h("div", {}, `${k}: ${n(r[k] || 0)}`))));
+      tipOn(row, () => h("div", {}, h("b", {}, labelFor(r)), keys.map((k) => h("div", {}, `${label("verdict", k)}: ${n(r[k] || 0)}`))));
       return row;
     }));
   }
@@ -229,12 +295,12 @@
     }));
     const cols = { ok: OUTCOME_COL.ok, empty: OUTCOME_COL.ok_empty, abandoned: OUTCOME_COL.abandoned, timeout: OUTCOME_COL.timeout, failed: OUTCOME_COL.http_error, skipped: OUTCOME_COL.skipped };
     return h("div", {},
-      stackedBars({ data, keys: Object.keys(cols), colors: cols, height: 120,
-        tipFor: (d) => h("div", {}, h("b", {}, `Run ${d.id} · ${d.status}`), h("div", {}, dt(d.started_at)),
-          h("div", {}, `answered ${d.ok + d.empty} / ${d.queries_requested}`), d.abandoned ? h("div", {}, `abandoned by crt.sh: ${d.abandoned}`) : null,
-          d.timeout ? h("div", {}, `timeouts: ${d.timeout}`) : null, d.failed ? h("div", {}, `failed: ${d.failed}`) : null),
+      stackedBars({ data, keys: Object.keys(cols), colors: cols, height: 120, aria: t("health.aria"),
+        tipFor: (d) => h("div", {}, h("b", {}, t("health.tip_run", { id: d.id, status: label("status", d.status) })), h("div", {}, `${dt(d.started_at)} UTC`),
+          h("div", {}, t("health.tip_answered", { a: d.ok + d.empty, n: d.queries_requested })), d.abandoned ? h("div", {}, t("health.tip_abandoned", { n: d.abandoned })) : null,
+          d.timeout ? h("div", {}, t("health.tip_timeout", { n: d.timeout })) : null, d.failed ? h("div", {}, t("health.tip_failed", { n: d.failed })) : null),
         onClick: (d) => go("run", { id: d.id }) }),
-      legend([["answered", cols.ok], ["answered: empty", cols.empty], ["abandoned scan", cols.abandoned], ["timeout", cols.timeout], ["failed", cols.failed], ["skipped (budget)", cols.skipped]]));
+      legend(Object.keys(cols).map((k) => [t(`health.legend.${k}`), cols[k]])));
   }
 
   // ---------------------------------------------------------------- pages
@@ -250,27 +316,29 @@
     const covVals = Object.values(cov);
     const tiers = o.campaign_tiers || {};
     const kpis = h("div", { class: "kpis" },
-      kpi("Flagged names", n(o.flagged), `${n(v.likely || 0)} likely · ${n(v.possible || 0)} possible · ${n(v.lead || 0)} leads`, "var(--likely)", "#/domains"),
-      kpi("First certificate ≤ 30 d", n(o.issued_30d), "flagged names whose first certificate is recent", "var(--possible)", "#/domains?since_days=30&since_field=first_issued&sort=first_issued"),
-      kpi("New to dataset · 7 d", n(o.new_7d), "first collected in the last 7 days", "var(--accent)", "#/domains?since_days=7&sort=first_seen"),
-      kpi("Still resolving", n(dns.resolved || 0), `of ${n(checked)} DNS-checked · ${n(dns.unchecked || 0)} not yet checked`, "var(--live)", "#/domains?dns=resolved"),
-      kpi("Campaign hypotheses", n(Object.values(tiers).reduce((a, x) => a + x, 0)), `${n(tiers.strong || 0)} strong · ${n(tiers.corroborated || 0)} corroborated · ${n(tiers.chained || 0)} chained`, "var(--corr)", "#/campaigns"),
-      kpi("Last crt.sh run", last ? last.status : "none", last ? `${covVals.filter((x) => x === "full").length}/${covVals.length} keywords fully covered · ${ago(last.finished_at || last.started_at)}` : "no collection yet", last?.status === "complete" ? "var(--live)" : "var(--possible)", last ? `#/run?id=${last.id}` : "#/collection"));
+      kpi(t("ov.kpi.flagged"), n(o.flagged), t("ov.kpi.flagged_sub", { likely: n(v.likely || 0), possible: n(v.possible || 0), lead: n(v.lead || 0) }), "var(--likely)", "#/domains"),
+      kpi(t("ov.kpi.issued30"), n(o.issued_30d), t("ov.kpi.issued30_sub"), "var(--possible)", "#/domains?since_days=30&since_field=first_issued&sort=first_issued"),
+      kpi(t("ov.kpi.new7"), n(o.new_7d), t("ov.kpi.new7_sub"), "var(--accent)", "#/domains?since_days=7&sort=first_seen"),
+      kpi(t("ov.kpi.resolving"), n(dns.resolved || 0), t("ov.kpi.resolving_sub", { checked: n(checked), unchecked: n(dns.unchecked || 0) }), "var(--live)", "#/domains?dns=resolved"),
+      kpi(t("ov.kpi.campaigns"), n(Object.values(tiers).reduce((a, x) => a + x, 0)), t("ov.kpi.campaigns_sub", { strong: n(tiers.strong || 0), corroborated: n(tiers.corroborated || 0), chained: n(tiers.chained || 0) }), "var(--corr)", "#/campaigns"),
+      kpi(t("ov.kpi.lastrun"), last ? label("status", last.status) : t("ov.kpi.lastrun_none"),
+        last ? t("ov.kpi.lastrun_sub", { full: covVals.filter((x) => x === "full").length, total: covVals.length, ago: ago(last.finished_at || last.started_at) }) : t("ov.kpi.lastrun_none_sub"),
+        last?.status === "complete" ? "var(--live)" : "var(--possible)", last ? `#/run?id=${last.id}` : "#/collection"));
 
-    const weekly = card("Flagged certificate issuance", "first certificate per flagged name, by week · 52 weeks",
-      stackedBars({ data: o.weekly_issuance, keys: ["likely", "possible", "lead"], colors: { likely: VCOL.likely, possible: VCOL.possible, lead: VCOL.lead },
-        label: (d, i) => (i % 8 === 0 ? d.week.slice(2, 10) : ""),
-        tipFor: (d) => h("div", {}, h("b", {}, `week of ${d.week}`), h("div", {}, `likely ${d.likely} · possible ${d.possible} · lead ${d.lead}`), h("div", { class: "muted" }, "click to list")),
+    const weekly = card(t("ov.weekly.title"), t("ov.weekly.hint"),
+      stackedBars({ data: o.weekly_issuance, keys: ["likely", "possible", "lead"], colors: { likely: VCOL.likely, possible: VCOL.possible, lead: VCOL.lead }, aria: t("ov.weekly.title"),
+        xlabel: (d, i) => (i % 8 === 0 ? d.week.slice(2, 10) : ""),
+        tipFor: (d) => h("div", {}, h("b", {}, t("ov.weekly.tip_week", { week: d.week })), h("div", {}, `${label("verdict", "likely")} ${d.likely} · ${label("verdict", "possible")} ${d.possible} · ${label("verdict", "lead")} ${d.lead}`), h("div", { class: "muted" }, t("ov.weekly.tip_click"))),
         onClick: (d) => go("domains", { since_days: Math.ceil((Date.now() - Date.parse(d.week)) / 864e5), since_field: "first_issued", sort: "first_issued", order: "asc" }) }),
-      legend([["likely", VCOL.likely], ["possible", VCOL.possible], ["lead (no brand)", VCOL.lead]]),
-      h("p", { class: "faint", style: { "margin-top": "8px" } }, "Issuance date comes from the certificate itself (not_before), so backfilled history appears in the week it happened, not the week it was collected."));
+      legend([[label("verdict", "likely"), VCOL.likely], [label("verdict", "possible"), VCOL.possible], [t("ov.weekly.legend_lead"), VCOL.lead]]),
+      h("p", { class: "faint", style: { "margin-top": "8px" } }, t("ov.weekly.note")));
 
     const crtRuns = o.collection.runs.filter((r) => r.source_id === "crtsh").slice(0, 30);
-    const health = card("Collection health", "crt.sh runs · query outcomes",
-      crtRuns.length ? runStrip(crtRuns) : empty("No crt.sh runs yet."),
+    const health = card(t("ov.health.title"), t("ov.health.hint"),
+      crtRuns.length ? runStrip(crtRuns) : empty(t("ov.health.none")),
       last ? h("div", { style: { "margin-top": "10px" } }, kv([
-        ["Last run", h("span", {}, statusChip(last.status), " ", h("a", { href: `#/run?id=${last.id}` }, `#${last.id}`), ` · ${dt(last.started_at)} UTC · ${secs(last.duration_s)}`)],
-        ["Coverage", h("span", {}, Object.entries(cov).sort().map(([k, c]) => tag(`${k}:${c}`, c === "full" ? "contains-pattern answered" : c === "partial" ? "only prefix/dotted answered" : "no pattern answered")))],
+        [t("ov.health.last"), h("span", {}, statusChip(last.status), " ", h("a", { href: `#/run?id=${last.id}` }, `#${last.id}`), ` · ${dt(last.started_at)} UTC · ${secs(last.duration_s)}`)],
+        [t("ov.health.coverage"), h("span", {}, Object.entries(cov).sort().map(([k, c]) => tag(`${k}: ${label("coverage", c)}`, t(`coverage_text.${c}`))))],
       ])) : null);
 
     const dnsBar = h("div", {}, (() => {
@@ -278,39 +346,38 @@
       const vals = { resolved: dns.resolved || 0, nxdomain: dns.nxdomain || 0, no_address: dns.no_address || 0, failed: (dns.temporary_failure || 0) + (dns.failure || 0) + (dns.timeout || 0), unchecked: dns.unchecked || 0 };
       const cols = { resolved: "var(--live)", nxdomain: "var(--gone)", no_address: "#4b5768", failed: "var(--fail)", unchecked: "var(--panel-3)" };
       const tot = Math.max(1, keys.reduce((a, k) => a + vals[k], 0));
-      return [h("div", { class: "stack" }, keys.map((k) => { const sp = h("span", { style: { width: `${(vals[k] / tot) * 100}%`, background: cols[k] } }); tipOn(sp, () => h("div", {}, `${k}: ${n(vals[k])}`)); return sp; })),
-        legend(keys.map((k) => [`${k.replace("_", " ")} ${n(vals[k])}`, cols[k]]))];
+      return [h("div", { class: "stack" }, keys.map((k) => { const sp = h("span", { style: { width: `${(vals[k] / tot) * 100}%`, background: cols[k] } }); tipOn(sp, () => h("div", {}, `${label("dns", k)}: ${n(vals[k])}`)); return sp; })),
+        legend(keys.map((k) => [`${label("dns", k)} ${n(vals[k])}`, cols[k]]))];
     })());
 
-    const recent = card("Recently collected", "flagged names, newest first",
+    const recent = card(t("ov.recent.title"), t("ov.recent.hint"),
       table([
-        { label: "Domain", cls: "dom", cell: (r) => domLink(r.name) },
-        { label: "Verdict", cell: (r) => verdictChip(r.verdict) },
-        { label: "Score", cell: (r) => scoreBar(r.score, r.verdict) },
-        { label: "First cert", cell: (r) => h("span", { class: "mono nowrap" }, day(r.first_issued)) },
-        { label: "DNS", cell: (r) => dnsChip(r.dns) },
+        { label: t("col.domain"), cls: "dom", cell: (r) => domLink(r.name) },
+        { label: t("col.verdict"), cell: (r) => verdictChip(r.verdict) },
+        { label: t("col.score"), cell: (r) => scoreBar(r.score, r.verdict) },
+        { label: t("col.first_cert"), cell: (r) => h("span", { class: "mono nowrap" }, day(r.first_issued)) },
+        { label: t("col.dns"), cell: (r) => dnsChip(r.dns) },
       ], o.recent, { onRow: (r) => go("domain", { name: r.name }) }),
-      h("div", { style: { "margin-top": "8px" } }, h("a", { href: "#/domains?sort=first_seen" }, "All flagged names →")));
+      h("div", { style: { "margin-top": "8px" } }, h("a", { href: "#/domains?sort=first_seen" }, t("ov.recent.all"))));
 
-    const brands = card("Brands impersonated", "likely + possible names per brand",
-      o.brands.length ? hbars(o.brands, ["likely", "possible"], { likely: VCOL.likely, possible: VCOL.possible }, (r) => r.label, (r) => `#/domains?brand=${encodeURIComponent(r.brand)}&verdict=likely,possible`) : empty("No brand impersonation flagged."));
-    const camps = card("Largest campaign hypotheses", "leads, not findings",
+    const brands = card(t("ov.brands.title"), t("ov.brands.hint"),
+      o.brands.length ? hbars(o.brands, ["likely", "possible"], { likely: VCOL.likely, possible: VCOL.possible }, (r) => brandLabel(r.brand), (r) => `#/domains?brand=${encodeURIComponent(r.brand)}&verdict=likely,possible`) : empty(t("ov.brands.none")));
+    const camps = card(t("ov.camps.title"), t("ov.camps.hint"),
       o.top_campaigns.length ? table([
-        { label: "Campaign", cell: (r) => campLink(r.id) },
-        { label: "Tier", cell: (r) => tierChip(r.tier) },
-        { label: "Names", num: true, cell: (r) => n(r.size) },
-        { label: "Brands", cell: (r) => r.brands.map((b) => tag(b)) },
-      ], o.top_campaigns, { onRow: (r) => go("campaign", { id: r.id }) }) : empty("No campaign hypotheses in this analysis."));
+        { label: t("col.campaign"), cell: (r) => campLink(r.id) },
+        { label: t("col.tier"), cell: (r) => tierChip(r.tier) },
+        { label: t("col.names"), num: true, cell: (r) => n(r.size) },
+        { label: t("col.brands"), cell: (r) => r.brands.map(brandTag) },
+      ], o.top_campaigns, { onRow: (r) => go("campaign", { id: r.id }) }) : empty(t("empty.campaigns")));
 
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Overview"),
-        h("p", {}, "Names impersonating Bulgarian brands, spotted in Certificate Transparency, scored by explainable rules and grouped into campaign hypotheses. Every number links to the records behind it."))),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("ov.title")), h("p", {}, t("ov.intro")))),
       kpis,
       h("div", { class: "grid g-main" }, weekly, health),
       h("div", { class: "grid g-main", style: { "margin-top": "14px" } }, recent,
-        h("div", { class: "grid" }, card("DNS state of flagged names", "latest check per name", dnsBar), brands, camps)));
+        h("div", { class: "grid" }, card(t("ov.dns.title"), t("ov.dns.hint"), dnsBar), brands, camps)));
   };
-  PAGES[""].title = "Overview";
+  PAGES[""].titleKey = "nav.overview";
   function kpi(k, v, sub, color, href) {
     return h("a", { class: "kpi", href, style: { "--kc": color, color: "inherit", "text-decoration": "none" } },
       h("div", { class: "k" }, k), h("div", { class: "v" }, v), h("div", { class: "s" }, sub));
@@ -328,43 +395,41 @@
     const data = await api("domains", { ...st, limit: 100 });
     const upd = (patch) => go("domains", { ...st, offset: 0, ...patch });
     const vset = new Set(st.verdict.split(",").filter(Boolean));
-    const vbtn = (v) => h("button", { class: vset.has(v) ? "on" : null, "aria-pressed": vset.has(v) ? "true" : "false", onclick: () => {
+    const vbtn = (v) => h("button", { class: vset.has(v) ? "on" : null, "aria-pressed": vset.has(v) ? "true" : "false", title: label("verdict_text", v), onclick: () => {
       vset.has(v) ? vset.delete(v) : vset.add(v);
       upd({ verdict: [...vset].join(",") || "likely" });
-    } }, v);
+    } }, label("verdict", v));
     let deb;
-    const search = h("input", { class: "f", type: "search", value: st.q, placeholder: "filter by name…", maxlength: "100", "aria-label": "Filter by name",
+    const search = h("input", { class: "f", type: "search", value: st.q, placeholder: t("dom.filter_ph"), maxlength: "100", "aria-label": t("dom.filter_aria"),
       oninput: (e) => { clearTimeout(deb); deb = setTimeout(() => upd({ q: e.target.value.trim() }), 350); } });
-    const sel = (name, opts, cur, label) => h("select", { "aria-label": label, onchange: (e) => upd({ [name]: e.target.value }) },
+    const sel = (name, opts, cur, aria) => h("select", { "aria-label": aria, onchange: (e) => upd({ [name]: e.target.value }) },
       opts.map(([val, lab]) => h("option", { value: val, selected: val === cur ? true : null }, lab)));
-    const brands = Object.entries(META.brands).sort((a, b) => a[1].label.localeCompare(b[1].label));
-    const sortBtn = (key, label) => h("button", { class: st.sort === key ? "on" : null, onclick: () => upd({ sort: key, order: st.sort === key && st.order === "desc" ? "asc" : "desc" }) },
-      label, st.sort === key ? (st.order === "desc" ? " ↓" : " ↑") : "");
+    const brands = Object.keys(META.brands).map((k) => [k, brandLabel(k)]).sort((a, b) => a[1].localeCompare(b[1], LANG));
+    const sortBtn = (key, text) => h("button", { class: st.sort === key ? "on" : null, onclick: () => upd({ sort: key, order: st.sort === key && st.order === "desc" ? "asc" : "desc" }) },
+      text, st.sort === key ? (st.order === "desc" ? " ↓" : " ↑") : "");
     const filters = h("div", { class: "filters" }, search,
-      h("div", { class: "grp", role: "group", "aria-label": "Verdict" }, ["likely", "possible", "lead", "weak", "legitimate", "none"].map(vbtn)),
-      sel("brand", [["", "all brands"], ...brands.map(([k, b]) => [k, b.label])], st.brand, "Brand"),
-      sel("dns", [["", "any DNS state"], ["resolved", "resolving"], ["nxdomain", "NXDOMAIN"], ["no_address", "no address"], ["failed", "lookup failed"], ["unchecked", "not checked"]], st.dns, "DNS state"),
-      sel("since_days", [["", "any time"], ["7", "last 7 days"], ["30", "last 30 days"], ["90", "last 90 days"], ["365", "last year"]], st.since_days, "Time window"),
-      sel("since_field", [["first_seen", "…collected"], ["first_issued", "…first certificate"]], st.since_field, "Time field"),
-      h("label", { class: "tog" }, h("input", { type: "checkbox", checked: st.campaign === "yes" ? true : null, onchange: (e) => upd({ campaign: e.target.checked ? "yes" : "" }) }), "in a campaign"));
+      h("div", { class: "grp", role: "group", "aria-label": t("col.verdict") }, ["likely", "possible", "lead", "weak", "legitimate", "none"].map(vbtn)),
+      sel("brand", [["", t("dom.all_brands")], ...brands], st.brand, t("col.brand")),
+      sel("dns", [["", t("dom.any_dns")], ...["resolved", "nxdomain", "no_address", "failed", "unchecked"].map((k) => [k, label("dns", k)])], st.dns, t("col.dns")),
+      sel("since_days", [["", t("dom.any_time")], ["7", t("dom.last_n_days", { n: 7 })], ["30", t("dom.last_n_days", { n: 30 })], ["90", t("dom.last_n_days", { n: 90 })], ["365", t("dom.last_year")]], st.since_days, t("dom.window_aria")),
+      sel("since_field", [["first_seen", t("dom.by_collected")], ["first_issued", t("dom.by_issued")]], st.since_field, t("dom.field_aria")),
+      h("label", { class: "tog" }, h("input", { type: "checkbox", checked: st.campaign === "yes" ? true : null, onchange: (e) => upd({ campaign: e.target.checked ? "yes" : "" }) }), t("dom.in_campaign")));
     const cols = [
-      { label: sortBtn("name", "Domain"), cls: "dom", cell: (r) => domLink(r.name) },
-      { label: "Verdict", cell: (r) => verdictChip(r.verdict) },
-      { label: sortBtn("score", "Score"), cell: (r) => scoreBar(r.score, r.verdict) },
-      { label: "Brands", cell: (r) => r.brands.map((b) => tag(b)) },
-      { label: sortBtn("first_issued", "First cert"), cell: (r) => h("span", { class: "mono nowrap" }, day(r.first_issued)) },
-      { label: sortBtn("first_seen", "Collected"), cell: (r) => h("span", { class: "mono nowrap", title: r.first_seen_at }, day(r.first_seen_at)) },
-      { label: "DNS", cell: (r) => h("span", { title: r.dns_at ? `checked ${dt(r.dns_at)} UTC` : "" }, dnsChip(r.dns)) },
-      { label: "Campaign", cell: (r) => (r.campaign_id ? campLink(r.campaign_id) : h("span", { class: "faint" }, "–")) },
+      { label: sortBtn("name", t("col.domain")), cls: "dom", cell: (r) => domLink(r.name) },
+      { label: t("col.verdict"), cell: (r) => verdictChip(r.verdict) },
+      { label: sortBtn("score", t("col.score")), cell: (r) => scoreBar(r.score, r.verdict) },
+      { label: t("col.brands"), cell: (r) => r.brands.map(brandTag) },
+      { label: sortBtn("first_issued", t("col.first_cert")), cell: (r) => h("span", { class: "mono nowrap" }, day(r.first_issued)) },
+      { label: sortBtn("first_seen", t("col.collected")), cell: (r) => h("span", { class: "mono nowrap", title: r.first_seen_at }, day(r.first_seen_at)) },
+      { label: t("col.dns"), cell: (r) => h("span", { title: r.dns_at ? t("dom.checked_at", { at: dt(r.dns_at) }) : "" }, dnsChip(r.dns)) },
+      { label: t("col.campaign"), cell: (r) => (r.campaign_id ? campLink(r.campaign_id) : h("span", { class: "faint" }, "–")) },
     ];
-    const pager = h("div", { class: "pager" }, h("span", {}, `${n(data.total)} names · showing ${data.total ? st.offset + 1 : 0}–${Math.min(st.offset + data.limit, data.total)}`),
-      h("span", {}, h("button", { class: "btn", disabled: st.offset === 0 ? true : null, onclick: () => go("domains", { ...st, offset: Math.max(0, st.offset - 100) }) }, "← Prev"), " ",
-        h("button", { class: "btn", disabled: st.offset + data.limit >= data.total ? true : null, onclick: () => go("domains", { ...st, offset: st.offset + 100 }) }, "Next →")));
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Domains"), h("p", {}, "Every name seen in a collected certificate, with the verdict of the current analysis. Filters are kept in the address, so a view can be shared."))),
-      filters, h("section", { class: "card flush" }, table(cols, data.rows, { onRow: (r) => go("domain", { name: r.name }), empty: "No names match these filters." }), pager));
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.domains")), h("p", {}, t("dom.intro")))),
+      filters, h("section", { class: "card flush" }, table(cols, data.rows, { onRow: (r) => go("domain", { name: r.name }), empty: t("dom.none") }),
+        pager(data.total, st.offset, data.limit, () => go("domains", { ...st, offset: Math.max(0, st.offset - 100) }), () => go("domains", { ...st, offset: st.offset + 100 }), t("pager.names"))));
   };
-  PAGES.domains.title = "Domains";
+  PAGES.domains.titleKey = "nav.domains";
 
   // domain detail ----------------------------------------------------------------
   PAGES.domain = async function domain(params) {
@@ -373,86 +438,86 @@
     const lastDns = d.dns[0];
     const pts = d.signals.filter((x) => x.points > 0);
     const totalPts = pts.reduce((a, x) => a + x.points, 0);
-    const scoreStack = h("div", { class: "stack", role: "img", "aria-label": "score composition" }, pts.map((x, i) => {
+    const scoreStack = h("div", { class: "stack", role: "img", "aria-label": t("dd.score_aria") }, pts.map((x, i) => {
       const sp = h("span", { style: { width: `${(x.points / Math.max(100, totalPts)) * 100}%`, background: x.corroborating ? "var(--likely)" : "var(--indigo)", opacity: 1 - i * 0.07, "animation-delay": `${i * 40}ms` } });
-      tipOn(sp, () => h("div", {}, h("b", {}, `${x.rule} +${x.points}`), h("div", {}, x.detail)));
+      tipOn(sp, () => h("div", {}, h("b", {}, `${x.rule} +${x.points}`), h("div", {}, tx(x.detail))));
       return sp;
     }));
-    const why = card("Why this verdict", dec ? `score ${dec.score} = capped sum of signals` : "",
-      dec ? h("div", {}, h("div", { class: "explain" }, h("b", {}, `${dec.verdict}: `), META.verdicts[dec.verdict] || "",
-        dec.verdict === "likely" || dec.verdict === "possible" ? " A brand token alone never qualifies; a corroborating signal (red) must accompany it." : ""),
+    const why = card(t("dd.why"), dec ? t("dd.why_hint", { score: dec.score }) : "",
+      dec ? h("div", {}, h("div", { class: "explain" }, h("b", {}, `${label("verdict", dec.verdict)}: `), `${label("verdict_text", dec.verdict)}.`,
+        dec.verdict === "likely" || dec.verdict === "possible" ? ` ${t("dd.brand_alone")}` : ""),
       pts.length ? scoreStack : null,
       d.signals.length ? d.signals.map((x) => h("div", { class: "sigrow" },
         h("span", { class: "pts", style: { color: x.points ? (x.corroborating ? "var(--likely)" : "var(--indigo)") : "var(--faint)" } }, x.points ? `+${x.points}` : "0"),
-        h("span", { class: "rule", title: x.text }, x.rule, x.corroborating ? h("span", { class: "faint", title: "corroborating signal" }, " ●") : null),
-        h("span", { class: "det" }, h("b", {}, x.detail), h("br"), x.text))) : empty("No signals: nothing about this name matched a rule.")) : empty("Not scored in the current analysis."));
+        h("span", { class: "rule", title: label("rule", x.rule) }, x.rule, x.corroborating ? h("span", { class: "faint", title: t("dd.corroborating") }, " ●") : null),
+        h("span", { class: "det" }, h("b", {}, tx(x.detail)), h("br"), label("rule", x.rule)))) : empty(t("dd.no_signals"))) : empty(t("dd.not_scored")));
 
-    const certs = card("Certificates", `${d.certificates.length} listing this name`,
+    const certs = card(t("dd.certs"), t("dd.certs_hint", { n: d.certificates.length }),
       table([
-        { label: "Issued", cell: (c) => h("a", { class: "mono nowrap", href: `#/certificate?id=${c.id}` }, day(c.not_before)) },
-        { label: "Expires", cell: (c) => h("span", { class: "mono nowrap faint" }, day(c.not_after)) },
-        { label: "Issuer", cell: (c) => h("span", { title: c.issuer_name }, (c.issuer_name || "").replace(/^.*CN=/, "")) },
-        { label: "Names", num: true, cell: (c) => n(c.names) },
-        { label: "Listed as", cell: (c) => [c.wildcard ? tag("*.wildcard") : null, (c.via || "").split(",").map((x) => tag(x === "common_name" ? "CN" : "SAN match"))] },
+        { label: t("col.issued"), cell: (c) => h("a", { class: "mono nowrap", href: `#/certificate?id=${c.id}` }, day(c.not_before)) },
+        { label: t("col.expires"), cell: (c) => h("span", { class: "mono nowrap faint" }, day(c.not_after)) },
+        { label: t("col.issuer"), cell: (c) => h("span", { title: c.issuer_name }, issuerShort(c.issuer_name)) },
+        { label: t("col.names"), num: true, cell: (c) => n(c.names) },
+        { label: t("col.listed_as"), cell: (c) => [c.wildcard ? tag(t("cert.wildcard")) : null, (c.via || "").split(",").map((x) => tag(label("via", x)))] },
         { label: "crt.sh", cell: (c) => c.crtsh_ids.slice(0, 2).map((i) => h("div", {}, crtLink(i))) },
       ], d.certificates, { onRow: (c) => go("certificate", { id: c.id }) }));
 
     const accepted = d.relationships.filter((r) => r.accepted);
     const rejected = d.relationships.filter((r) => !r.accepted);
     const relTable = (rows) => table([
-      { label: "Related name", cls: "dom", cell: (r) => domLink(r.a === d.domain.name ? r.b : r.a) },
-      { label: "Strength", cell: (r) => tierChip(r.strength) },
-      { label: "Weight", num: true, cell: (r) => h("span", { class: "mono" }, r.weight.toFixed(2)) },
-      { label: "Evidence", cell: (r) => h("div", { class: "ev" }, r.evidence.map((e) => tag(`${e.kind}: ${e.value}`, `class ${e.class} · shared by ${e.df} flagged names · +${e.weight.toFixed(2)}`))) },
-      { label: "Decision", cell: (r) => h("span", { class: "muted" }, r.reason) },
+      { label: t("col.related"), cls: "dom", cell: (r) => domLink(r.a === d.domain.name ? r.b : r.a) },
+      { label: t("col.strength"), cell: (r) => tierChip(r.strength) },
+      { label: t("col.weight"), num: true, cell: (r) => h("span", { class: "mono" }, dec2(r.weight)) },
+      { label: t("col.evidence"), cell: (r) => h("div", { class: "ev" }, r.evidence.map((e) => tag(`${label("kind", e.kind)}: ${e.value}`, t("ev.tip", { cls: label("class", e.class), df: e.df, w: dec2(e.weight) })))) },
+      { label: t("col.decision"), cell: (r) => h("span", { class: "muted" }, tx(r.reason)) },
     ], rows, { rowClass: (r) => (r.accepted ? "relrow" : "relrow rej") });
-    const rels = card("Related names", `${accepted.length} accepted relationship(s) · ${rejected.length} rejected candidate(s)`,
-      accepted.length ? relTable(accepted) : empty("No accepted relationships."),
-      rejected.length ? h("details", { style: { "margin-top": "10px" } }, h("summary", { class: "muted" }, `Show ${rejected.length} candidate relationship(s) that did not meet the corroboration rules`), relTable(rejected)) : null);
+    const rels = card(t("dd.related"), t("dd.related_hint", { a: accepted.length, r: rejected.length }),
+      accepted.length ? relTable(accepted) : empty(t("dd.no_related")),
+      rejected.length ? h("details", { style: { "margin-top": "10px" } }, h("summary", { class: "muted" }, t("dd.show_rejected", { n: rejected.length })), relTable(rejected)) : null);
 
-    const status = card("Status", null, kv([
-      ["Registrable", h("span", { class: "mono" }, d.domain.registrable)],
-      ["Collected first", h("span", {}, h("span", { class: "mono" }, dt(d.domain.first_seen_at)), " UTC ", h("span", { class: "faint" }, `(${ago(d.domain.first_seen_at)})`))],
-      ["First certificate", h("span", { class: "mono" }, day(dec?.first_issued))],
-      ["DNS now", lastDns ? h("span", {}, dnsChip(lastDns.outcome), h("span", { class: "faint" }, ` checked ${dt(lastDns.checked_at)} UTC`)) : dnsChip(null)],
-      lastDns?.addresses?.length ? ["Addresses", h("span", { class: "mono" }, lastDns.addresses.join(", "))] : null,
-      ["Campaign", d.campaign ? h("span", {}, campLink(d.campaign.id), " ", tierChip(d.campaign.tier), h("span", { class: "faint" }, ` ${d.campaign.size} names`)) : h("span", { class: "faint" }, "none")],
+    const status = card(t("dd.status"), null, kv([
+      [t("dd.registrable"), h("span", { class: "mono" }, d.domain.registrable)],
+      [t("dd.collected_first"), h("span", {}, h("span", { class: "mono" }, dt(d.domain.first_seen_at)), " UTC ", h("span", { class: "faint" }, `(${ago(d.domain.first_seen_at)})`))],
+      [t("dd.first_cert"), h("span", { class: "mono" }, day(dec?.first_issued))],
+      [t("dd.dns_now"), lastDns ? h("span", {}, dnsChip(lastDns.outcome), h("span", { class: "faint" }, ` ${t("dd.checked_at", { at: dt(lastDns.checked_at) })}`)) : dnsChip(null)],
+      lastDns?.addresses?.length ? [t("dd.addresses"), addrList(lastDns.addresses)] : null,
+      [t("col.campaign"), d.campaign ? h("span", {}, campLink(d.campaign.id), " ", tierChip(d.campaign.tier), h("span", { class: "faint" }, ` ${t("dd.campaign_size", { n: d.campaign.size })}`)) : h("span", { class: "faint" }, t("dd.no_campaign"))],
     ]));
-    const dnsHist = card("DNS history", `${d.dns.length} observation(s) · appended, never overwritten`,
+    const dnsHist = card(t("dd.dns_hist"), t("dd.dns_hist_hint", { n: d.dns.length }),
       d.dns.length ? table([
-        { label: "Checked (UTC)", cell: (o) => h("span", { class: "mono nowrap" }, dt(o.checked_at)) },
-        { label: "Outcome", cell: (o) => dnsChip(o.outcome) },
-        { label: "Addresses", cell: (o) => h("span", { class: "mono break" }, o.addresses.join(", ") || "–") },
-        { label: "Run", cell: (o) => h("a", { href: `#/run?id=${o.run_id}` }, `#${o.run_id}`) },
-      ], d.dns) : empty("Not DNS-checked yet (only flagged names are checked)."));
-    const inds = card("Correlation indicators", "what this name carries into correlation",
+        { label: t("col.checked_utc"), cell: (o) => h("span", { class: "mono nowrap" }, dt(o.checked_at)) },
+        { label: t("col.outcome"), cell: (o) => dnsChip(o.outcome) },
+        { label: t("dd.addresses"), cell: (o) => addrList(o.addresses) },
+        { label: t("col.run"), cell: (o) => h("a", { href: `#/run?id=${o.run_id}` }, `#${o.run_id}`) },
+      ], d.dns) : empty(t("dd.no_dns")));
+    const inds = card(t("dd.indicators"), t("dd.indicators_hint"),
       d.indicators.length ? table([
-        { label: "Kind", cell: (i) => h("span", { class: "mono" }, i.kind) },
-        { label: "Value", cell: (i) => h("span", { class: "mono break" }, i.value) },
-        { label: "Class", cell: (i) => i.class },
-        { label: "df", num: true, title: "flagged names sharing this value", cell: (i) => n(i.df) },
-        { label: "Weight", num: true, cell: (i) => h("span", { class: i.status === "active" ? "mono" : "mono faint", title: i.status }, i.status === "active" ? i.weight.toFixed(2) : i.status.replace("_", " ")) },
-      ], d.indicators) : empty("Only flagged names are correlated."));
-    const prov = card("Source provenance", "the exact records this name came from",
+        { label: t("col.kind"), cell: (i) => kindLabel(i.kind) },
+        { label: t("col.value"), cell: (i) => h("span", { class: "mono break" }, i.value) },
+        { label: t("col.class"), cell: (i) => label("class", i.class) },
+        { label: "df", num: true, title: t("col.df_title"), cell: (i) => n(i.df) },
+        { label: t("col.weight"), num: true, cell: (i) => h("span", { class: i.status === "active" ? "mono" : "mono faint", title: label("indstatus", i.status) }, i.status === "active" ? dec2(i.weight) : label("indstatus", i.status)) },
+      ], d.indicators) : empty(t("dd.no_indicators")));
+    const prov = card(t("dd.provenance"), t("dd.provenance_hint"),
       table([
-        { label: "Record", cell: (r) => h("span", { class: "mono" }, `#${r.id}`) },
+        { label: t("col.record"), cell: (r) => h("span", { class: "mono" }, `#${r.id}`) },
         { label: "crt.sh", cell: (r) => crtLink(r.crtsh_id) },
-        { label: "Query", cell: (r) => h("span", { class: "mono" }, r.query) },
-        { label: "Run", cell: (r) => h("a", { href: `#/run?id=${r.run_id}` }, `#${r.run_id}`) },
-        { label: "Fetched (UTC)", cell: (r) => h("span", { class: "mono nowrap" }, dt(r.fetched_at)) },
-        { label: "Payload SHA-256", cell: (r) => h("span", { class: "mono", title: r.payload_sha256 }, short(r.payload_sha256, 16)) },
+        { label: t("col.query"), cell: (r) => h("span", { class: "mono" }, r.query) },
+        { label: t("col.run"), cell: (r) => h("a", { href: `#/run?id=${r.run_id}` }, `#${r.run_id}`) },
+        { label: t("col.fetched_utc"), cell: (r) => h("span", { class: "mono nowrap" }, dt(r.fetched_at)) },
+        { label: t("col.payload_sha"), cell: (r) => h("span", { class: "mono", title: r.payload_sha256 }, short(r.payload_sha256, 16)) },
       ], d.records),
-      h("p", { class: "faint", style: { "margin-top": "8px" } }, `Scored by rules ${d.provenance.rules_version} in analysis #${d.provenance.analysis_id} (as of ${dt(d.provenance.as_of)} UTC, dataset ${short(d.provenance.dataset_sha256, 16)}).`));
+      h("p", { class: "faint", style: { "margin-top": "8px" } }, t("dd.scored_by", { rules: d.provenance.rules_version, id: d.provenance.analysis_id, asof: dt(d.provenance.as_of), sha: short(d.provenance.dataset_sha256, 16) })));
 
     return h("div", {},
       h("div", { class: "hero" }, h("h1", {}, d.domain.name), dec ? verdictChip(dec.verdict) : null,
         dec ? h("span", { class: "score", style: { color: VCOL[dec.verdict] } }, dec.score) : null,
-        dec ? dec.brands.map((b) => tag(META.brands[b]?.label || b)) : null),
-      h("div", { class: "grid g-main" }, h("div", { class: "grid" }, why, rels, certs), h("div", { class: "grid" }, status, dnsHist, inds)),
-      h("div", { style: { "margin-top": "14px" } }, prov));
+        dec ? dec.brands.map(brandTag) : null),
+      h("div", { class: "grid g-main" }, why, h("div", { class: "grid" }, status, dnsHist)),
+      h("div", { class: "grid", style: { "margin-top": "14px" } }, rels, h("div", { class: "grid g2" }, certs, inds), prov));
   };
-  PAGES.domain.title = "Domain";
-  PAGES.domain.crumbs = (p) => [h("a", { href: "#/domains" }, "Domains"), p.get("name") || ""];
+  PAGES.domain.titleKey = "page.domain";
+  PAGES.domain.crumbs = (p) => [h("a", { href: "#/domains" }, t("nav.domains")), p.get("name") || ""];
 
   // certificates ---------------------------------------------------------------
   PAGES.certificates = async function certificates(params) {
@@ -461,147 +526,139 @@
     let deb;
     const upd = (patch) => go("certificates", { ...st, offset: 0, ...patch });
     const filters = h("div", { class: "filters" },
-      h("input", { class: "f", type: "search", value: st.q, placeholder: "name, issuer or serial…", maxlength: "100", "aria-label": "Search certificates",
+      h("input", { class: "f", type: "search", value: st.q, placeholder: t("cert.filter_ph"), maxlength: "100", "aria-label": t("cert.filter_aria"),
         oninput: (e) => { clearTimeout(deb); deb = setTimeout(() => upd({ q: e.target.value.trim() }), 350); } }),
-      h("div", { class: "grp" }, [["yes", "with flagged names"], ["all", "all certificates"]].map(([k, l]) => h("button", { class: st.flagged === k ? "on" : null, onclick: () => upd({ flagged: k }) }, l))));
-    const pager = h("div", { class: "pager" }, h("span", {}, `${n(data.total)} certificates`),
-      h("span", {}, h("button", { class: "btn", disabled: st.offset === 0 ? true : null, onclick: () => go("certificates", { ...st, offset: Math.max(0, st.offset - 100) }) }, "← Prev"), " ",
-        h("button", { class: "btn", disabled: st.offset + 100 >= data.total ? true : null, onclick: () => go("certificates", { ...st, offset: st.offset + 100 }) }, "Next →")));
+      h("div", { class: "grp" }, [["yes", t("cert.with_flagged")], ["all", t("cert.all")]].map(([k, l]) => h("button", { class: st.flagged === k ? "on" : null, onclick: () => upd({ flagged: k }) }, l))));
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Certificates"), h("p", {}, "Precertificate and final certificate share issuer and serial, so they appear once here with both crt.sh records. crt.sh lists only the identities that matched our keywords, so 'names' is what we saw, not necessarily every name on the certificate."))),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.certificates")), h("p", {}, t("cert.intro")))),
       filters,
       h("section", { class: "card flush" }, table([
-        { label: "Issued", cell: (c) => h("a", { class: "mono nowrap", href: `#/certificate?id=${c.id}` }, day(c.not_before)) },
-        { label: "Issuer", cell: (c) => h("span", { title: c.issuer_name }, (c.issuer_name || "").replace(/^.*CN=/, "")) },
-        { label: "Serial", cell: (c) => h("span", { class: "mono", title: c.serial }, short(c.serial, 14)) },
-        { label: "Names seen", num: true, cell: (c) => n(c.names) },
-        { label: "Flagged names", cls: "dom", cell: (c) => c.flagged_names.slice(0, 3).map((x) => h("div", {}, domLink(x))) },
-        { label: "Max score", num: true, cell: (c) => (c.max_score === null ? "–" : h("span", { class: "mono" }, c.max_score)) },
-        { label: "Collected", cell: (c) => h("span", { class: "mono nowrap faint" }, day(c.first_seen_at)) },
-      ], data.rows, { onRow: (c) => go("certificate", { id: c.id }) }), pager));
+        { label: t("col.issued"), cell: (c) => h("a", { class: "mono nowrap", href: `#/certificate?id=${c.id}` }, day(c.not_before)) },
+        { label: t("col.issuer"), cell: (c) => h("span", { title: c.issuer_name }, issuerShort(c.issuer_name)) },
+        { label: t("col.serial"), cell: (c) => h("span", { class: "mono", title: c.serial }, short(c.serial, 14)) },
+        { label: t("col.names_seen"), num: true, cell: (c) => n(c.names) },
+        { label: t("col.flagged_names"), cls: "dom", cell: (c) => c.flagged_names.slice(0, 3).map((x) => h("div", {}, domLink(x))) },
+        { label: t("col.max_score"), num: true, cell: (c) => (c.max_score === null ? "–" : h("span", { class: "mono" }, c.max_score)) },
+        { label: t("col.collected"), cell: (c) => h("span", { class: "mono nowrap faint" }, day(c.first_seen_at)) },
+      ], data.rows, { onRow: (c) => go("certificate", { id: c.id }), empty: t("cert.none") }),
+      pager(data.total, st.offset, 100, () => go("certificates", { ...st, offset: Math.max(0, st.offset - 100) }), () => go("certificates", { ...st, offset: st.offset + 100 }), t("pager.certs"))));
   };
-  PAGES.certificates.title = "Certificates";
+  PAGES.certificates.titleKey = "nav.certificates";
 
   PAGES.certificate = async function certificate(params) {
     const d = await api("certificate", { id: params.get("id") || "" });
     const c = d.certificate;
     return h("div", {},
-      h("div", { class: "hero" }, h("h1", {}, `Certificate ${short(c.serial, 20)}`), tag((c.issuer_name || "").replace(/^.*CN=/, ""))),
+      h("div", { class: "hero" }, h("h1", {}, t("cert.hero", { serial: short(c.serial, 20) })), tag(issuerShort(c.issuer_name))),
       h("div", { class: "grid g-main" },
         h("div", { class: "grid" },
-          card("Names on this certificate", "as returned by crt.sh for our queries",
+          card(t("cert.names"), t("cert.names_hint"),
             table([
-              { label: "Name", cls: "dom", cell: (r) => domLink(r.name) },
-              { label: "Listed as", cell: (r) => [r.wildcard ? tag("*.wildcard") : null, tag(r.via === "common_name" ? "CN" : "SAN match")] },
-              { label: "Verdict", cell: (r) => (r.verdict ? verdictChip(r.verdict) : "–") },
-              { label: "Score", cell: (r) => (r.score === null ? "–" : scoreBar(r.score, r.verdict)) },
+              { label: t("col.name"), cls: "dom", cell: (r) => domLink(r.name) },
+              { label: t("col.listed_as"), cell: (r) => [r.wildcard ? tag(t("cert.wildcard")) : null, tag(label("via", r.via))] },
+              { label: t("col.verdict"), cell: (r) => (r.verdict ? verdictChip(r.verdict) : "–") },
+              { label: t("col.score"), cell: (r) => (r.score === null ? "–" : scoreBar(r.score, r.verdict)) },
             ], d.names)),
-          card("Source records", "verbatim crt.sh JSON, as stored",
+          card(t("cert.records"), t("cert.records_hint"),
             d.records.map((r) => h("div", { style: { "margin-bottom": "12px" } },
-              h("div", { class: "muted", style: { "margin-bottom": "4px" } }, `record #${r.id} · `, crtLink(r.crtsh_id), ` · query `, h("span", { class: "mono" }, r.query), ` · run `, h("a", { href: `#/run?id=${r.run_id}` }, `#${r.run_id}`), ` · sha256 ${short(r.payload_sha256, 16)}`),
+              h("div", { class: "muted", style: { "margin-bottom": "4px" } }, t("cert.record_line", { id: r.id }), " · ", crtLink(r.crtsh_id), ` · ${t("col.query").toLowerCase()} `, h("span", { class: "mono" }, r.query), ` · ${t("col.run").toLowerCase()} `, h("a", { href: `#/run?id=${r.run_id}` }, `#${r.run_id}`), ` · sha256 ${short(r.payload_sha256, 16)}`),
               h("pre", { class: "mono", style: { margin: 0, padding: "10px", background: "var(--bg-2)", border: "1px solid var(--line)", "border-radius": "6px", overflow: "auto", "white-space": "pre-wrap", "word-break": "break-all" } }, JSON.stringify(r.payload, null, 2)))))),
-        card("Certificate", null, kv([
-          ["Issuer", h("span", { class: "break" }, c.issuer_name)],
-          ["Serial", h("span", { class: "mono break" }, c.serial)],
-          ["Key", h("span", { class: "mono break" }, c.cert_key)],
-          ["Common name", h("span", { class: "mono break" }, c.common_name || "–")],
-          ["Not before", h("span", { class: "mono" }, dt(c.not_before))],
-          ["Not after", h("span", { class: "mono" }, dt(c.not_after))],
-          ["First collected", h("span", { class: "mono" }, `${dt(c.first_seen_at)} UTC`)],
+        card(t("cert.card"), null, kv([
+          [t("col.issuer"), h("span", { class: "break" }, c.issuer_name)],
+          [t("col.serial"), h("span", { class: "mono break" }, c.serial)],
+          [t("cert.key"), h("span", { class: "mono break" }, c.cert_key)],
+          [t("cert.cn"), h("span", { class: "mono break" }, c.common_name || "–")],
+          [t("cert.not_before"), h("span", { class: "mono" }, dt(c.not_before))],
+          [t("cert.not_after"), h("span", { class: "mono" }, dt(c.not_after))],
+          [t("cert.first_collected"), h("span", { class: "mono" }, `${dt(c.first_seen_at)} UTC`)],
         ]))));
   };
-  PAGES.certificate.title = "Certificate";
-  PAGES.certificate.crumbs = (p) => [h("a", { href: "#/certificates" }, "Certificates"), `#${p.get("id")}`];
+  PAGES.certificate.titleKey = "page.certificate";
+  PAGES.certificate.crumbs = (p) => [h("a", { href: "#/certificates" }, t("nav.certificates")), `#${p.get("id")}`];
 
   // campaigns ----------------------------------------------------------------------
-  const TIER_TEXT = {
-    strong: "Every member is connected through strong indicators alone (same registrable domain or same certificate).",
-    corroborated: "Members are linked by relationships corroborated by several independent indicator kinds.",
-    chained: "A sparse group: members are connected through intermediaries more than to each other. Review before relying on it.",
-  };
   PAGES.campaigns = async function campaigns(params) {
     const tier = params.get("tier") || "";
     const d = await api("campaigns", { tier });
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Campaign hypotheses"),
-        h("p", {}, "Groups of flagged names connected by accepted relationships. A campaign is a hypothesis about shared infrastructure - a lead for an investigator, not proof of common ownership, and never attribution to a person."))),
-      h("div", { class: "filters" }, h("div", { class: "grp" }, [["", "all tiers"], ["strong", "strong"], ["corroborated", "corroborated"], ["chained", "chained"]].map(([k, l]) =>
-        h("button", { class: tier === k ? "on" : null, title: TIER_TEXT[k] || "", onclick: () => go("campaigns", { tier: k }) }, l)))),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("camp.title")), h("p", {}, t("camp.intro")))),
+      h("div", { class: "filters" }, h("div", { class: "grp" }, [["", t("camp.all_tiers")], ["strong", label("tier", "strong")], ["corroborated", label("tier", "corroborated")], ["chained", label("tier", "chained")]].map(([k, l]) =>
+        h("button", { class: tier === k ? "on" : null, title: k ? label("tier_text", k) : "", onclick: () => go("campaigns", { tier: k }) }, l)))),
       h("section", { class: "card flush" }, table([
-        { label: "Campaign", cell: (r) => campLink(r.id) },
-        { label: "Tier", cell: (r) => h("span", { title: TIER_TEXT[r.tier] }, tierChip(r.tier)) },
-        { label: "Names", num: true, cell: (r) => n(r.size) },
-        { label: "Links", num: true, cell: (r) => n(r.edges) },
-        { label: "Density", num: true, title: "accepted links / possible links", cell: (r) => h("span", { class: "mono" }, r.density.toFixed(2)) },
-        { label: "Cohesion", num: true, title: "mean link weight", cell: (r) => h("span", { class: "mono" }, r.cohesion.toFixed(2)) },
-        { label: "Brands", cell: (r) => r.brands.map((b) => tag(b)) },
-        { label: "Issued", cell: (r) => h("span", { class: "mono nowrap" }, `${day(r.first_issued)} → ${day(r.last_issued)}`) },
-        { label: "Members", cls: "dom", cell: (r) => h("span", { class: "muted" }, r.members.slice(0, 3).join(", "), r.members.length > 3 ? ` +${r.members.length - 3}` : "") },
-      ], d.rows, { onRow: (r) => go("campaign", { id: r.id }), empty: "No campaign hypotheses in this analysis." })),
-      h("p", { class: "faint", style: { "margin-top": "10px" } }, `Correlation settings: min_edge ${d.config.min_edge}, min_kinds ${d.config.min_kinds}, require a non-weak kind: ${d.config.require_non_weak}. See Methodology.`));
+        { label: t("col.campaign"), cell: (r) => campLink(r.id) },
+        { label: t("col.tier"), cell: (r) => tierChip(r.tier) },
+        { label: t("col.names"), num: true, cell: (r) => n(r.size) },
+        { label: t("col.links"), num: true, cell: (r) => n(r.edges) },
+        { label: t("col.density"), num: true, title: t("col.density_title"), cell: (r) => h("span", { class: "mono" }, dec2(r.density)) },
+        { label: t("col.cohesion"), num: true, title: t("col.cohesion_title"), cell: (r) => h("span", { class: "mono" }, dec2(r.cohesion)) },
+        { label: t("col.brands"), cell: (r) => r.brands.map(brandTag) },
+        { label: t("col.issued"), cell: (r) => h("span", { class: "mono nowrap" }, `${day(r.first_issued)} → ${day(r.last_issued)}`) },
+        { label: t("col.members"), cls: "dom", cell: (r) => h("span", { class: "muted" }, r.members.slice(0, 3).join(", "), r.members.length > 3 ? ` +${r.members.length - 3}` : "") },
+      ], d.rows, { onRow: (r) => go("campaign", { id: r.id }), empty: t("empty.campaigns") })),
+      h("p", { class: "faint", style: { "margin-top": "10px" } }, t("camp.settings", { edge: d.config.min_edge, kinds: d.config.min_kinds, nonweak: d.config.require_non_weak ? t("word.yes") : t("word.no") })));
   };
-  PAGES.campaigns.title = "Campaigns";
+  PAGES.campaigns.titleKey = "nav.campaigns";
 
   PAGES.campaign = async function campaign(params) {
     const d = await api("campaign", { id: params.get("id") || "" });
     const c = d.campaign;
-    const evBox = h("div", { class: "evbox" }, h("p", { class: "muted" }, "Select a link or a name in the graph to see the evidence behind it."));
+    const evBox = h("div", { class: "evbox" }, h("p", { class: "muted" }, t("cd.select")));
     const showEdge = (e) => {
       evBox.replaceChildren(h("h3", { style: { "margin-bottom": "6px" } }, domLink(e.a), " ↔ ", domLink(e.b)),
-        h("p", {}, tierChip(e.strength), ` weight ${e.weight.toFixed(2)} · ${e.reason}`),
+        h("p", {}, tierChip(e.strength), ` ${t("col.weight").toLowerCase()} ${dec2(e.weight)} · ${tx(e.reason)}`),
         table([
-          { label: "Indicator", cell: (x) => h("span", { class: "mono" }, x.kind) },
-          { label: "Shared value", cell: (x) => h("span", { class: "mono break" }, x.value) },
-          { label: "Class", cell: (x) => x.class },
-          { label: "Shared by", num: true, title: "flagged names carrying this value", cell: (x) => n(x.df) },
-          { label: "Weight", num: true, cell: (x) => h("span", { class: "mono" }, `+${x.weight.toFixed(2)}`) },
+          { label: t("col.indicator"), cell: (x) => kindLabel(x.kind) },
+          { label: t("col.shared_value"), cell: (x) => h("span", { class: "mono break" }, x.value) },
+          { label: t("col.class"), cell: (x) => label("class", x.class) },
+          { label: t("col.shared_by"), num: true, title: t("col.df_title"), cell: (x) => n(x.df) },
+          { label: t("col.weight"), num: true, cell: (x) => h("span", { class: "mono" }, `+${dec2(x.weight)}`) },
         ], e.evidence));
     };
     const showNode = (m) => {
       const mine = d.edges.filter((e) => e.a === m.name || e.b === m.name);
       evBox.replaceChildren(h("h3", { style: { "margin-bottom": "6px" } }, domLink(m.name)),
-        h("p", {}, verdictChip(m.verdict), ` score ${m.score} · first certificate ${day(m.first_issued)} · `, dnsChip(m.dns)),
-        h("p", { class: "muted" }, `${mine.length} accepted link(s) inside this campaign. Click a link for its evidence.`));
+        h("p", {}, verdictChip(m.verdict), ` ${t("col.score").toLowerCase()} ${m.score} · ${t("dd.first_cert").toLowerCase()} ${day(m.first_issued)} · `, dnsChip(m.dns)),
+        h("p", { class: "muted" }, t("cd.node_links", { n: mine.length })));
     };
     const graph = forceGraph(d.members, d.edges, showEdge, showNode);
     const tl = memberTimeline(d.members);
     return h("div", {},
       h("div", { class: "hero" }, h("h1", {}, c.id), tierChip(c.tier),
-        h("span", { class: "muted" }, `${c.size} names · ${c.edges} links · density ${c.density.toFixed(2)} · cohesion ${c.cohesion.toFixed(2)} · weakest link ${c.min_weight.toFixed(2)}`)),
-      h("div", { class: `explain ${c.tier === "chained" ? "warn" : ""}` }, h("b", {}, `${c.tier}: `), TIER_TEXT[c.tier],
-        " This group is a hypothesis about shared infrastructure, derived from the evidence below; it is not proof of common ownership."),
-      h("div", { class: "grid g-main" },
-        h("div", { class: "grid" }, card("Relationship graph", "node colour = verdict · line = strength · thickness = weight", graph), card("Evidence", null, evBox), card("Issuance timeline", "first certificate of each member", tl)),
-        h("div", { class: "grid" },
-          card("Members", null, table([
-            { label: "Name", cls: "dom", cell: (m) => domLink(m.name) },
-            { label: "Verdict", cell: (m) => verdictChip(m.verdict) },
-            { label: "Score", num: true, cell: (m) => h("span", { class: "mono" }, m.score) },
-            { label: "First cert", cell: (m) => h("span", { class: "mono nowrap" }, day(m.first_issued)) },
-            { label: "DNS", cell: (m) => dnsChip(m.dns) },
+        h("span", { class: "muted" }, t("cd.stats", { size: c.size, edges: c.edges, density: dec2(c.density), cohesion: dec2(c.cohesion), weakest: dec2(c.min_weight) }))),
+      h("div", { class: `explain ${c.tier === "chained" ? "warn" : ""}` }, h("b", {}, `${label("tier", c.tier)}: `), label("tier_text", c.tier), " ", t("cd.hypothesis")),
+      h("div", { class: "grid g-main" }, card(t("cd.graph"), t("cd.graph_hint"), graph), card(t("cd.evidence"), null, evBox)),
+      h("div", { class: "grid", style: { "margin-top": "14px" } }, card(t("cd.timeline"), t("cd.timeline_hint"), tl),
+        h("div", { class: "grid g2" },
+          card(t("col.members"), null, table([
+            { label: t("col.name"), cls: "dom", cell: (m) => domLink(m.name) },
+            { label: t("col.verdict"), cell: (m) => verdictChip(m.verdict) },
+            { label: t("col.score"), num: true, cell: (m) => h("span", { class: "mono" }, m.score) },
+            { label: t("col.first_cert"), cell: (m) => h("span", { class: "mono nowrap" }, day(m.first_issued)) },
+            { label: t("col.dns"), cell: (m) => dnsChip(m.dns) },
           ], d.members)),
-          card("Shared indicators", "values carried by 2+ members", table([
-            { label: "Kind", cell: (x) => h("span", { class: "mono" }, x.kind) },
-            { label: "Value", cell: (x) => h("span", { class: "mono break" }, x.value) },
-            { label: "Members", num: true, cell: (x) => n(x.members) },
-            { label: "Corpus df", num: true, title: "flagged names in the whole analysis carrying it", cell: (x) => n(x.df) },
-            { label: "Weight", num: true, cell: (x) => h("span", { class: x.status === "active" ? "mono" : "mono faint", title: x.status }, x.status === "active" ? x.weight.toFixed(2) : x.status.replace("_", " ")) },
+          card(t("cd.shared"), t("cd.shared_hint"), table([
+            { label: t("col.kind"), cell: (x) => kindLabel(x.kind) },
+            { label: t("col.value"), cell: (x) => h("span", { class: "mono break" }, x.value) },
+            { label: t("col.members"), num: true, cell: (x) => n(x.members) },
+            { label: t("col.corpus_df"), num: true, title: t("col.corpus_df_title"), cell: (x) => n(x.df) },
+            { label: t("col.weight"), num: true, cell: (x) => h("span", { class: x.status === "active" ? "mono" : "mono faint", title: label("indstatus", x.status) }, x.status === "active" ? dec2(x.weight) : label("indstatus", x.status)) },
           ], d.shared_indicators)))));
   };
-  PAGES.campaign.title = "Campaign";
-  PAGES.campaign.crumbs = (p) => [h("a", { href: "#/campaigns" }, "Campaigns"), p.get("id") || ""];
+  PAGES.campaign.titleKey = "page.campaign";
+  PAGES.campaign.crumbs = (p) => [h("a", { href: "#/campaigns" }, t("nav.campaigns")), p.get("id") || ""];
 
   function forceGraph(members, edges, onEdge, onNode) {
     const N = members.length;
     const idx = new Map(members.map((m, i) => [m.name, i]));
     const pos = members.map((m, i) => ({ x: Math.cos((2 * Math.PI * i) / N) * 150, y: Math.sin((2 * Math.PI * i) / N) * 150, vx: 0, vy: 0 }));
     const E = edges.map((e) => ({ ...e, s: idx.get(e.a), t: idx.get(e.b) })).filter((e) => e.s !== undefined && e.t !== undefined);
-    const ideal = N > 40 ? 60 : 150;
+    const ideal = N > 40 ? 60 : N > 12 ? 115 : 150;
+    const repel = N > 12 ? 3200 : 1800;
     for (let it = 0; it < 320; it++) {
       const alpha = 1 - it / 320;
       for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
         const dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
-        const d2 = Math.max(25, dx * dx + dy * dy), f = (1800 * alpha) / d2, d = Math.sqrt(d2);
+        const d2 = Math.max(25, dx * dx + dy * dy), f = (repel * alpha) / d2, d = Math.sqrt(d2);
         pos[i].vx -= (dx / d) * f; pos[i].vy -= (dy / d) * f; pos[j].vx += (dx / d) * f; pos[j].vy += (dy / d) * f;
       }
       for (const e of E) {
@@ -614,19 +671,19 @@
     }
     const xs = pos.map((p) => p.x), ys = pos.map((p) => p.y);
     const pad = 70;
-    // Never zoom in past 1:1 - the view box is at least the size of the 460px-tall
-    // panel, so labels keep their real size on small campaigns.
+    // Never zoom in past 1:1 - the view box is at least the size of the panel, so
+    // labels keep their real size on small campaigns.
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const w = Math.max(Math.max(...xs) - Math.min(...xs) + 2 * pad + 260, 560);
     const hh = Math.max(Math.max(...ys) - Math.min(...ys) + 2 * pad, 380);
     let vb = { x: cx - w / 2, y: cy - hh / 2, w, h: hh };
-    const svg = s("svg", { viewBox: `${vb.x} ${vb.y} ${vb.w} ${vb.h}`, role: "img", "aria-label": `Relationship graph of ${N} names` });
+    const svg = s("svg", { viewBox: `${vb.x} ${vb.y} ${vb.w} ${vb.h}`, role: "img", "aria-label": t("cd.graph_aria", { n: N }) });
     const setVB = () => svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
     const edgeEls = E.map((e) => {
       const col = e.strength === "strong" ? "var(--strong)" : "var(--corr)";
       const ln = s("line", { class: "edge", x1: pos[e.s].x, y1: pos[e.s].y, x2: pos[e.t].x, y2: pos[e.t].y, stroke: col, "stroke-width": 1 + Math.min(4, e.weight / 3), "stroke-opacity": 0.75 });
       ln.addEventListener("click", (ev) => { ev.stopPropagation(); select(ln); onEdge(e); });
-      tipOn(ln, () => h("div", {}, h("b", {}, `${e.strength} · ${e.weight.toFixed(2)}`), h("div", {}, e.kinds.join(" + "))));
+      tipOn(ln, () => h("div", {}, h("b", {}, `${label("tier", e.strength)} · ${dec2(e.weight)}`), h("div", {}, e.kinds.map((k) => label("kind", k)).join(" + "))));
       return ln;
     });
     let selected = null;
@@ -635,13 +692,13 @@
       const r = 5 + (m.score / 100) * 6;
       const g = s("g", { class: "node", transform: `translate(${pos[i].x},${pos[i].y})`, tabindex: "0", role: "button", "aria-label": m.name },
         s("circle", { r, fill: VCOL[m.verdict] || "var(--weak)" }),
-        N <= 40 ? s("text", pos[i].x < cx ? { x: -(r + 5), y: 3.5, "text-anchor": "end" } : { x: r + 5, y: 3.5 },
+        N <= 12 ? s("text", pos[i].x < cx ? { x: -(r + 5), y: 3.5, "text-anchor": "end" } : { x: r + 5, y: 3.5 },
           m.name.length > 34 ? `${m.name.slice(0, 32)}…` : m.name) : null);
       const act = () => { select(g.firstChild); onNode(m); for (const [k, ln] of edgeEls.entries()) ln.setAttribute("stroke-opacity", E[k].a === m.name || E[k].b === m.name ? 1 : 0.15); };
       g.addEventListener("click", (ev) => { ev.stopPropagation(); act(); });
       g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
       g.addEventListener("dblclick", () => go("domain", { name: m.name }));
-      tipOn(g, () => h("div", {}, h("b", {}, m.name), h("div", {}, `${m.verdict} · score ${m.score}`), h("div", { class: "muted" }, "double-click to open")));
+      tipOn(g, () => h("div", {}, h("b", {}, m.name), h("div", {}, `${label("verdict", m.verdict)} · ${t("col.score").toLowerCase()} ${m.score}`), h("div", { class: "muted" }, t("cd.dblclick"))));
       return g;
     });
     svg.append(...edgeEls, ...nodeEls);
@@ -666,27 +723,32 @@
       setVB();
     });
     return h("div", { class: "graph-wrap" }, svg,
-      h("div", { class: "graph-legend" }, h("span", {}, h("i", { style: { "border-color": "var(--strong)" } }), "strong"), h("span", {}, h("i", { style: { "border-color": "var(--corr)" } }), "corroborated"), h("span", { class: "faint" }, "scroll to zoom · drag to pan")));
+      h("div", { class: "graph-legend" }, h("span", {}, h("i", { style: { "border-color": "var(--strong)" } }), label("tier", "strong")), h("span", {}, h("i", { style: { "border-color": "var(--corr)" } }), label("tier", "corroborated")), h("span", { class: "faint" }, N > 12 ? t("cd.zoom_hint_labels") : t("cd.zoom_hint"))));
   }
 
   function memberTimeline(members) {
-    const pts = members.filter((m) => m.first_issued).map((m) => ({ ...m, t: Date.parse(m.first_issued.slice(0, 10)) }));
-    if (!pts.length) return empty("No issuance dates.");
-    const W = 760, H = 70, pad = 30;
-    const t0 = Math.min(...pts.map((p) => p.t)), t1 = Math.max(...pts.map((p) => p.t));
+    const pts = members.filter((m) => m.first_issued).map((m) => ({ ...m, ts: Date.parse(m.first_issued.slice(0, 10)) }));
+    if (!pts.length) return empty(t("cd.no_dates"));
+    const W = 760, pad = 30, step = 7;
+    const t0 = Math.min(...pts.map((p) => p.ts)), t1 = Math.max(...pts.map((p) => p.ts));
     const span = Math.max(864e5, t1 - t0);
-    const x = (t) => pad + ((t - t0) / span) * (W - 2 * pad);
-    const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}` },
-      s("line", { class: "grid-l", x1: pad, x2: W - pad, y1: 34, y2: 34 }),
-      s("text", { x: pad, y: 62, "text-anchor": "start" }, new Date(t0).toISOString().slice(0, 10)),
-      s("text", { x: W - pad, y: 62, "text-anchor": "end" }, new Date(t1).toISOString().slice(0, 10)));
+    const x = (v) => pad + ((v - t0) / span) * (W - 2 * pad);
+    // Same-day members stack upwards; the chart grows with the tallest stack.
+    const counts = new Map();
+    for (const p of pts) { const key = Math.round(x(p.ts) / 6); counts.set(key, (counts.get(key) || 0) + 1); }
+    const base = 14 + Math.max(...counts.values()) * step;
+    const H = base + 32;
+    const svg = s("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": t("cd.timeline") },
+      s("line", { class: "grid-l", x1: pad, x2: W - pad, y1: base, y2: base }),
+      s("text", { x: pad, y: base + 26, "text-anchor": "start" }, new Date(t0).toISOString().slice(0, 10)),
+      s("text", { x: W - pad, y: base + 26, "text-anchor": "end" }, new Date(t1).toISOString().slice(0, 10)));
     const stackAt = new Map();
     for (const p of pts) {
-      const key = Math.round(x(p.t) / 6);
+      const key = Math.round(x(p.ts) / 6);
       const k = stackAt.get(key) || 0; stackAt.set(key, k + 1);
-      const c = s("circle", { cx: x(p.t), cy: 34 - k * 7, r: 3.5, fill: VCOL[p.verdict] || "var(--weak)", style: { cursor: "pointer" } });
+      const c = s("circle", { cx: x(p.ts), cy: base - k * step, r: 3.5, fill: VCOL[p.verdict] || "var(--weak)", style: { cursor: "pointer" } });
       c.addEventListener("click", () => go("domain", { name: p.name }));
-      tipOn(c, () => h("div", {}, h("b", {}, p.name), h("div", {}, `first certificate ${day(p.first_issued)}`)));
+      tipOn(c, () => h("div", {}, h("b", {}, p.name), h("div", {}, `${t("dd.first_cert")}: ${day(p.first_issued)}`)));
       svg.append(c);
     }
     return svg;
@@ -698,52 +760,62 @@
     const kind = params.get("kind") || "all";
     const d = await api("timeline", { days, kind });
     const cols = { issued: "var(--possible)", first_seen: "var(--accent)", dns_change: "var(--indigo)" };
-    const labels = { issued: "certificate issued", first_seen: "first collected", dns_change: "DNS state changed" };
     const byDay = new Map();
     for (const e of d.events) { const k = e.t.slice(0, 10); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
-    const list = [...byDay.entries()].map(([k, evs]) => h("div", {}, h("div", { class: "timeline-day" }, `${k} · ${evs.length} event(s)`),
+    const evDetail = (e) => {
+      if (e.type === "first_seen") return t("tl.first_collected");
+      if (e.type === "dns_change") {
+        const [from, to] = String(e.detail || "").split(" -> ");
+        return `${from === "first check" ? t("tl.first_check") : label("dns", from)} → ${label("dns", to)}`;
+      }
+      return issuerShort(e.detail);
+    };
+    const list = [...byDay.entries()].map(([k, evs]) => h("div", {}, h("div", { class: "timeline-day" }, t("tl.day_head", { day: k, n: evs.length })),
       evs.map((e) => h("div", { class: "tl-ev" }, h("span", { class: "tm" }, e.t.slice(11, 16) || "–"),
-        h("span", { style: { color: cols[e.type] } }, h("span", { class: "dot" }), labels[e.type]),
-        h("span", { class: "mono break" }, domLink(e.domain), " ", h("span", { class: "muted" }, e.detail || "")),
+        h("span", { style: { color: cols[e.type] } }, h("span", { class: "dot" }), t(`tl.type.${e.type}`)),
+        h("span", { class: "mono break" }, domLink(e.domain), " ", h("span", { class: "muted" }, evDetail(e))),
         verdictChip(e.verdict)))));
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Timeline"), h("p", {}, "Chronology of flagged names: when certificates were issued, when this system first collected them, and when their DNS state changed."))),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.timeline")), h("p", {}, t("tl.intro")))),
       h("div", { class: "filters" },
-        h("div", { class: "grp" }, [["7", "7 days"], ["30", "30 days"], ["90", "90 days"], ["365", "1 year"]].map(([k, l]) => h("button", { class: days === k ? "on" : null, onclick: () => go("timeline", { days: k, kind }) }, l))),
-        h("div", { class: "grp" }, [["all", "all events"], ["issued", "issued"], ["first_seen", "collected"], ["dns_change", "DNS changes"]].map(([k, l]) => h("button", { class: kind === k ? "on" : null, onclick: () => go("timeline", { days, kind: k }) }, l)))),
-      card("Events per day", `${n(d.total)} event(s) in ${d.days} days`,
-        stackedBars({ data: d.daily, keys: ["issued", "first_seen", "dns_change"], colors: cols, height: 130,
-          label: (x, i) => (i % Math.max(1, Math.round(d.daily.length / 8)) === 0 ? x.day.slice(5) : ""),
-          tipFor: (x) => h("div", {}, h("b", {}, x.day), h("div", {}, `issued ${x.issued} · collected ${x.first_seen} · DNS ${x.dns_change}`)) }),
-        legend(Object.entries(labels).map(([k, l]) => [l, cols[k]]))),
-      h("div", { style: { "margin-top": "14px" } }, card("Events", d.total > d.events.length ? `newest ${d.events.length} of ${n(d.total)}` : null, d.events.length ? list : empty("No events in this window."))));
+        h("div", { class: "grp" }, [["7", t("tl.n_days", { n: 7 })], ["30", t("tl.n_days", { n: 30 })], ["90", t("tl.n_days", { n: 90 })], ["365", t("tl.one_year")]].map(([k, l]) => h("button", { class: days === k ? "on" : null, onclick: () => go("timeline", { days: k, kind }) }, l))),
+        h("div", { class: "grp" }, ["all", "issued", "first_seen", "dns_change"].map((k) => h("button", { class: kind === k ? "on" : null, onclick: () => go("timeline", { days, kind: k }) }, t(`tl.filter.${k}`))))),
+      card(t("tl.per_day"), t("tl.per_day_hint", { n: n(d.total), days: d.days }),
+        stackedBars({ data: d.daily, keys: ["issued", "first_seen", "dns_change"], colors: cols, height: 130, aria: t("tl.per_day"),
+          xlabel: (x, i) => (i % Math.max(1, Math.round(d.daily.length / 8)) === 0 ? x.day.slice(5) : ""),
+          tipFor: (x) => h("div", {}, h("b", {}, x.day), h("div", {}, t("tl.tip", { issued: x.issued, seen: x.first_seen, dns: x.dns_change }))) }),
+        legend(["issued", "first_seen", "dns_change"].map((k) => [t(`tl.type.${k}`), cols[k]]))),
+      h("div", { style: { "margin-top": "14px" } }, card(t("tl.events"), d.total > d.events.length ? t("tl.newest", { shown: d.events.length, total: n(d.total) }) : null, d.events.length ? list : empty(t("tl.none")))));
   };
-  PAGES.timeline.title = "Timeline";
+  PAGES.timeline.titleKey = "nav.timeline";
 
   // sources ------------------------------------------------------------------------
   PAGES.sources = async function sources() {
     const d = await api("sources");
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Sources"), h("p", {}, "Every public source the system reads, what it provides, and how reliably it answered. No third-party phishing feed is used; every record comes from this system's own collection."))),
-      h("div", { class: "grid g2" }, d.sources.map((x) => card(x.name, x.kind,
-        h("p", {}, x.description), h("p", { class: "muted" }, x.provenance),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.sources")), h("p", {}, t("src.intro")))),
+      h("div", { class: "grid g2" }, d.sources.map((x) => card(t(`source.${x.id}.name`), label("srckind", x.kind),
+        h("p", {}, t(`source.${x.id}.description`)), h("p", { class: "muted" }, t(`source.${x.id}.provenance`)),
         kv([
-          ["Endpoint", h("span", { class: "mono break" }, x.endpoint)],
-          ["Runs", h("span", {}, n(x.runs), " ", Object.entries(x.status_counts).map(([k, v]) => h("span", { style: { "margin-left": "8px" } }, statusChip(k), ` ${v}`)))],
-          ["Answer rate · 7 d", h("span", {}, pct(x.answer_rate_7d), h("span", { class: "faint" }, " of requested queries/lookups got a definitive answer"))],
-          ["Last complete run", h("span", { class: "mono" }, x.last_complete ? `${dt(x.last_complete)} UTC` : "never")],
-          ["Last run", x.last_run ? h("span", {}, statusChip(x.last_run.status), " ", h("a", { href: `#/run?id=${x.last_run.id}` }, `#${x.last_run.id}`), ` ${dt(x.last_run.started_at)} UTC`) : "–"],
-          ["Records stored", n(x.records)],
+          [t("src.endpoint"), h("span", { class: "mono break" }, x.endpoint)],
+          [t("src.runs"), h("span", {}, n(x.runs), " ", Object.entries(x.status_counts).map(([k, v]) => h("span", { style: { "margin-left": "8px" } }, statusChip(k), ` ${v}`)))],
+          [t("src.rate"), h("span", {}, pct(x.answer_rate_7d), h("span", { class: "faint" }, ` ${t("src.rate_note")}`))],
+          [t("src.last_complete"), h("span", { class: "mono" }, x.last_complete ? `${dt(x.last_complete)} UTC` : t("word.never"))],
+          [t("src.last_run"), x.last_run ? h("span", {}, statusChip(x.last_run.status), " ", h("a", { href: `#/run?id=${x.last_run.id}` }, `#${x.last_run.id}`), ` ${dt(x.last_run.started_at)} UTC`) : "–"],
+          [t("src.records"), n(x.records)],
         ])))),
-      h("div", { style: { "margin-top": "14px" } }, card("Network dependencies", "every external connection, and who makes it", table([
-        { label: "From", cell: (r) => h("b", {}, r.from) },
-        { label: "To", cell: (r) => h("span", { class: "mono break" }, r.to) },
-        { label: "Purpose", cell: (r) => r.purpose },
-        { label: "When", cell: (r) => r.when },
-        { label: "Note", cell: (r) => h("span", { class: "muted" }, r.note) },
-      ], d.network))));
+      h("div", { style: { "margin-top": "14px" } }, card(t("net.title"), t("net.hint"), networkTable(d.network))));
   };
-  PAGES.sources.title = "Sources";
+  PAGES.sources.titleKey = "nav.sources";
+  function networkTable(rows) {
+    return table([
+      { label: t("net.from"), cell: (r) => h("b", {}, t(`net.${r.id}.from`)) },
+      { label: t("net.to"), cell: (r) => h("span", { class: "mono break" }, r.to) },
+      { label: t("net.purpose"), cell: (r) => t(`net.${r.id}.purpose`) },
+      { label: t("net.when"), cell: (r) => t(`net.${r.id}.when`) },
+      { label: t("net.note"), cell: (r) => h("span", { class: "muted" }, t(`net.${r.id}.note`)) },
+    ], rows);
+  }
 
   // collection -----------------------------------------------------------------------
   PAGES.collection = async function collection(params) {
@@ -752,47 +824,45 @@
     const [runs, an] = await Promise.all([api("runs", { source: src, limit: 50, offset }), api("analyses")]);
     const crt = runs.rows.filter((r) => r.source_id === "crtsh");
     return h("div", {},
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Collection"), h("p", {}, "Partial collection is normal against a free shared service, so it is recorded, never hidden: a failed or abandoned query is never counted as 'no results'."))),
-      crt.length ? card("crt.sh query outcomes", "per run, newest right · click a bar for the run", runStrip(crt.slice(0, 40))) : null,
-      h("div", { class: "filters", style: { "margin-top": "14px" } }, h("div", { class: "grp" }, [["", "all sources"], ["crtsh", "crt.sh"], ["dns", "DNS"]].map(([k, l]) => h("button", { class: src === k ? "on" : null, onclick: () => go("collection", { source: k }) }, l)))),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("nav.collection")), h("p", {}, t("col.intro")))),
+      crt.length ? card(t("col.outcomes"), t("col.outcomes_hint"), runStrip(crt.slice(0, 40))) : null,
+      h("div", { class: "filters", style: { "margin-top": "14px" } }, h("div", { class: "grp" }, [["", t("col.all_sources")], ["crtsh", "crt.sh"], ["dns", "DNS"]].map(([k, l]) => h("button", { class: src === k ? "on" : null, onclick: () => go("collection", { source: k }) }, l)))),
       h("section", { class: "card flush" }, table([
-        { label: "Run", cell: (r) => h("a", { href: `#/run?id=${r.id}` }, `#${r.id}`) },
-        { label: "Source", cell: (r) => r.source_id },
-        { label: "Started (UTC)", cell: (r) => h("span", { class: "mono nowrap" }, dt(r.started_at)) },
-        { label: "Duration", num: true, cell: (r) => secs(r.duration_s) },
-        { label: "Status", cell: (r) => statusChip(r.status) },
-        { label: "Requested", num: true, cell: (r) => n(r.queries_requested) },
-        { label: "Answered", num: true, cell: (r) => n(r.queries_ok) },
-        { label: "Empty", num: true, cell: (r) => n(r.queries_empty) },
-        { label: "Abandoned", num: true, cell: (r) => n(r.queries_abandoned) },
-        { label: "Timeout", num: true, cell: (r) => n(r.queries_timeout) },
-        { label: "Failed", num: true, cell: (r) => n(r.queries_failed) },
-        { label: "Skipped", num: true, cell: (r) => n(r.queries_skipped) },
-        { label: "Records (new)", num: true, cell: (r) => `${n(r.records_received)} (${n(r.records_new)})` },
-        { label: "Software", cell: (r) => h("span", { class: "mono faint" }, r.software_version) },
+        { label: t("col.run"), cell: (r) => h("a", { href: `#/run?id=${r.id}` }, `#${r.id}`) },
+        { label: t("col.source"), cell: (r) => label("srcshort", r.source_id) },
+        { label: t("col.started_utc"), cell: (r) => h("span", { class: "mono nowrap" }, dt(r.started_at)) },
+        { label: t("col.duration"), num: true, cell: (r) => secs(r.duration_s) },
+        { label: t("col.status"), cell: (r) => statusChip(r.status) },
+        { label: t("col.requested"), num: true, cell: (r) => n(r.queries_requested) },
+        { label: t("col.answered"), num: true, cell: (r) => n(r.queries_ok) },
+        { label: t("col.empty"), num: true, cell: (r) => n(r.queries_empty) },
+        { label: t("col.abandoned"), num: true, cell: (r) => n(r.queries_abandoned) },
+        { label: t("col.timeout"), num: true, cell: (r) => n(r.queries_timeout) },
+        { label: t("col.failed"), num: true, cell: (r) => n(r.queries_failed) },
+        { label: t("col.skipped"), num: true, cell: (r) => n(r.queries_skipped) },
+        { label: t("col.records_new"), num: true, cell: (r) => `${n(r.records_received)} (${n(r.records_new)})` },
+        { label: t("col.software"), cell: (r) => h("span", { class: "mono faint" }, r.software_version) },
       ], runs.rows, { onRow: (r) => go("run", { id: r.id }) }),
-        h("div", { class: "pager" }, h("span", {}, `${n(runs.total)} runs`), h("span", {},
-          h("button", { class: "btn", disabled: offset === 0 ? true : null, onclick: () => go("collection", { source: src, offset: Math.max(0, offset - 50) }) }, "← Newer"), " ",
-          h("button", { class: "btn", disabled: offset + 50 >= runs.total ? true : null, onclick: () => go("collection", { source: src, offset: offset + 50 }) }, "Older →")))),
+        pager(runs.total, offset, 50, () => go("collection", { source: src, offset: Math.max(0, offset - 50) }), () => go("collection", { source: src, offset: offset + 50 }), t("pager.runs"))),
       h("div", { class: "grid g2", style: { "margin-top": "14px" } },
-        card("Analyses", "each one records its exact inputs and outputs", table([
+        card(t("col.analyses"), t("col.analyses_hint"), table([
           { label: "#", cell: (a) => a.id },
-          { label: "As of (UTC)", cell: (a) => h("span", { class: "mono nowrap" }, dt(a.as_of)) },
-          { label: "Rules", cell: (a) => h("span", { class: "mono" }, a.rules_version) },
-          { label: "Dataset", cell: (a) => h("span", { class: "mono", title: a.dataset_sha256 }, short(a.dataset_sha256)) },
-          { label: "Results", cell: (a) => h("span", { class: "mono", title: a.results_sha256 }, short(a.results_sha256)) },
-          { label: "Flagged", num: true, cell: (a) => n(a.domains_flagged) },
-          { label: "Campaigns", num: true, cell: (a) => n(a.campaigns_total) },
+          { label: t("col.asof_utc"), cell: (a) => h("span", { class: "mono nowrap" }, dt(a.as_of)) },
+          { label: t("col.rules"), cell: (a) => h("span", { class: "mono" }, a.rules_version) },
+          { label: t("col.dataset"), cell: (a) => h("span", { class: "mono", title: a.dataset_sha256 }, short(a.dataset_sha256)) },
+          { label: t("col.results"), cell: (a) => h("span", { class: "mono", title: a.results_sha256 }, short(a.results_sha256)) },
+          { label: t("col.flagged"), num: true, cell: (a) => n(a.domains_flagged) },
+          { label: t("nav.campaigns"), num: true, cell: (a) => n(a.campaigns_total) },
         ], an.analyses)),
-        card("Snapshots", "portable, fingerprinted exports", table([
-          { label: "Created (UTC)", cell: (x) => h("span", { class: "mono nowrap" }, dt(x.created_at)) },
-          { label: "Analysis", cell: (x) => `#${x.analysis_id}` },
-          { label: "Dataset SHA-256", cell: (x) => h("span", { class: "mono", title: x.dataset_sha256 }, short(x.dataset_sha256, 16)) },
-          { label: "File", cell: (x) => h("span", { class: "mono break" }, x.file_name) },
-          { label: "Size", num: true, cell: (x) => bytes(x.bytes) },
-        ], an.snapshots, { empty: "No snapshot exported yet." }))));
+        card(t("col.snapshots"), t("col.snapshots_hint"), table([
+          { label: t("col.created_utc"), cell: (x) => h("span", { class: "mono nowrap" }, dt(x.created_at)) },
+          { label: t("col.analysis"), cell: (x) => `#${x.analysis_id}` },
+          { label: t("col.dataset_sha"), cell: (x) => h("span", { class: "mono", title: x.dataset_sha256 }, short(x.dataset_sha256, 16)) },
+          { label: t("col.file"), cell: (x) => h("span", { class: "mono break" }, x.file_name) },
+          { label: t("col.size"), num: true, cell: (x) => bytes(x.bytes) },
+        ], an.snapshots, { empty: t("col.no_snapshots") }))));
   };
-  PAGES.collection.title = "Collection";
+  PAGES.collection.titleKey = "nav.collection";
 
   PAGES.run = async function run(params) {
     const d = await api("run", { id: params.get("id") || "" });
@@ -800,37 +870,37 @@
     const cov = r.note?.coverage;
     const isCrt = r.source_id === "crtsh";
     return h("div", {},
-      h("div", { class: "hero" }, h("h1", {}, `Run #${r.id}`), statusChip(r.status), h("span", { class: "muted" }, `${r.source_id} · ${dt(r.started_at)} UTC · ${secs(r.duration_s)} · trawl ${r.software_version}`)),
+      h("div", { class: "hero" }, h("h1", {}, t("run.hero", { id: r.id })), statusChip(r.status), h("span", { class: "muted" }, `${label("srcshort", r.source_id)} · ${dt(r.started_at)} UTC · ${secs(r.duration_s)} · trawl ${r.software_version}`)),
       h("div", { class: "grid g-main" },
-        isCrt ? card("Queries", `${d.queries.length} requests to crt.sh`, table([
-          { label: "Keyword", cell: (q) => h("span", { class: "mono" }, q.keyword) },
-          { label: "Role", cell: (q) => q.role },
-          { label: "Pattern", cell: (q) => h("span", { class: "mono" }, q.query) },
-          { label: "Outcome", cell: (q) => h("span", { style: { color: OUTCOME_COL[q.outcome] }, title: q.error || "" }, h("span", { class: "dot" }), q.outcome) },
+        isCrt ? card(t("run.queries"), t("run.queries_hint", { n: d.queries.length }), table([
+          { label: t("col.keyword"), cell: (q) => h("span", { class: "mono" }, q.keyword) },
+          { label: t("col.role"), cell: (q) => label("role", q.role) },
+          { label: t("col.pattern"), cell: (q) => h("span", { class: "mono" }, q.query) },
+          { label: t("col.outcome"), cell: (q) => h("span", { class: "nowrap", style: { color: OUTCOME_COL[q.outcome] }, title: q.outcome }, h("span", { class: "dot" }), label("outcome", q.outcome)) },
           { label: "HTTP", num: true, cell: (q) => q.http_status ?? "–" },
-          { label: "Tries", num: true, cell: (q) => q.attempts },
-          { label: "Time", num: true, cell: (q) => secs(q.duration_s) },
-          { label: "Bytes", num: true, cell: (q) => bytes(q.bytes) },
-          { label: "Records (new)", num: true, cell: (q) => (q.records === null ? "–" : `${n(q.records)} (${n(q.records_new)})`) },
-          { label: "Note", cell: (q) => h("span", { class: "muted" }, q.error || "") },
-        ], d.queries)) : card("DNS results", `${d.dns.length} lookups`, table([
-          { label: "Name", cls: "dom", cell: (o) => domLink(o.domain) },
-          { label: "Outcome", cell: (o) => dnsChip(o.outcome) },
-          { label: "Addresses", cell: (o) => h("span", { class: "mono break" }, o.addresses.join(", ") || "–") },
-          { label: "Error", cell: (o) => h("span", { class: "muted" }, o.error || "") },
+          { label: t("col.tries"), num: true, cell: (q) => q.attempts },
+          { label: t("col.time"), num: true, cell: (q) => secs(q.duration_s) },
+          { label: t("col.bytes"), num: true, cell: (q) => bytes(q.bytes) },
+          { label: t("col.records_new"), num: true, cell: (q) => (q.records === null ? "–" : `${n(q.records)} (${n(q.records_new)})`) },
+          { label: t("col.note"), cell: (q) => h("span", { class: "muted" }, tx(q.error || "")) },
+        ], d.queries)) : card(t("run.dns"), t("run.dns_hint", { n: d.dns.length }), table([
+          { label: t("col.name"), cls: "dom", cell: (o) => domLink(o.domain) },
+          { label: t("col.outcome"), cell: (o) => dnsChip(o.outcome) },
+          { label: t("dd.addresses"), cell: (o) => addrList(o.addresses) },
+          { label: t("col.error"), cell: (o) => h("span", { class: "muted" }, tx(o.error || "")) },
         ], d.dns)),
         h("div", { class: "grid" },
-          card("Summary", null, kv([
-            ["Requested", n(r.queries_requested)], ["Answered (records)", n(r.queries_ok)], ["Answered (empty)", n(r.queries_empty)],
-            isCrt ? ["Abandoned by crt.sh", n(r.queries_abandoned)] : null, ["Timeouts", n(r.queries_timeout)], ["Failed", n(r.queries_failed)],
-            isCrt ? ["Skipped (time budget)", n(r.queries_skipped)] : null, ["Records received", n(r.records_received)], ["New records", n(r.records_new)],
-            ["Finished", h("span", { class: "mono" }, r.finished_at ? `${dt(r.finished_at)} UTC` : "–")],
+          card(t("run.summary"), null, kv([
+            [t("col.requested"), n(r.queries_requested)], [t("run.answered_records"), n(r.queries_ok)], [t("run.answered_empty"), n(r.queries_empty)],
+            isCrt ? [t("run.abandoned"), n(r.queries_abandoned)] : null, [t("run.timeouts"), n(r.queries_timeout)], [t("col.failed"), n(r.queries_failed)],
+            isCrt ? [t("run.skipped"), n(r.queries_skipped)] : null, [t("run.records_received"), n(r.records_received)], [t("run.records_new"), n(r.records_new)],
+            [t("run.finished"), h("span", { class: "mono" }, r.finished_at ? `${dt(r.finished_at)} UTC` : "–")],
           ])),
-          cov ? card("Keyword coverage", "full = the contains-pattern answered", h("div", {}, Object.entries(cov).sort().map(([k, c]) => h("div", { class: "hbar" }, h("span", { class: "mono" }, k), h("span", { class: "track" }, h("span", { style: { width: c === "full" ? "100%" : c === "partial" ? "50%" : "4%", background: c === "full" ? "var(--live)" : c === "partial" ? "var(--possible)" : "var(--likely)" } })), h("span", { class: "muted" }, c))))) : null,
-          card("Configuration", "as recorded at run time", h("pre", { class: "mono", style: { margin: 0, "white-space": "pre-wrap", "word-break": "break-all", color: "var(--text-2)" } }, JSON.stringify(r.config_json, null, 2))))));
+          cov ? card(t("run.coverage"), t("run.coverage_hint"), h("div", {}, Object.entries(cov).sort().map(([k, c]) => h("div", { class: "hbar wide-lab" }, h("span", { class: "mono" }, k), h("span", { class: "track" }, h("span", { style: { width: c === "full" ? "100%" : c === "partial" ? "50%" : "4%", background: c === "full" ? "var(--live)" : c === "partial" ? "var(--possible)" : "var(--likely)" } })), h("span", { class: "muted", title: t(`coverage_text.${c}`) }, label("coverage", c)))))) : null,
+          card(t("run.config"), t("run.config_hint"), h("pre", { class: "mono", style: { margin: 0, "white-space": "pre-wrap", "word-break": "break-all", color: "var(--text-2)" } }, JSON.stringify(r.config_json, null, 2))))));
   };
-  PAGES.run.title = "Run";
-  PAGES.run.crumbs = (p) => [h("a", { href: "#/collection" }, "Collection"), `Run #${p.get("id")}`];
+  PAGES.run.titleKey = "page.run";
+  PAGES.run.crumbs = (p) => [h("a", { href: "#/collection" }, t("nav.collection")), t("run.hero", { id: p.get("id") })];
 
   // methodology -------------------------------------------------------------------------
   PAGES.methodology = async function methodology() {
@@ -838,89 +908,106 @@
     const p = m.provenance;
     const corr = m.correlation;
     const list = (arr) => h("div", { class: "ev" }, arr.map((x) => tag(x)));
+    const items = (prefix, count) => Array.from({ length: count }, (_, i) => h("li", {}, t(`${prefix}.${i + 1}`)));
     return h("div", { class: "prose" },
-      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "About & methodology"), h("p", {}, "What this system does, what it cannot establish, and the exact rules and settings behind everything on screen. The tables below are served by the running code, not written by hand."))),
-      h("div", { class: "explain warn" }, h("b", {}, "Independent portfolio / research demonstration. "), "Not affiliated with or endorsed by ГДБОП or any other authority, and not affiliated with the author of any third-party phishing feed. Nothing here identifies a person. Outputs are leads for investigation, not findings."),
-      h("h3", {}, "What it does"),
-      h("ol", {},
-        h("li", {}, "Collects certificate records from crt.sh, a public index of Certificate Transparency logs, by querying keywords for tracked Bulgarian brands. Every response is stored verbatim with its query, run and hash."),
-        h("li", {}, "Scores every name with explainable rules. A score is the capped sum of named signals; each signal says what it matched."),
-        h("li", {}, "Re-checks flagged names in DNS (lookup only) and appends each result, so appearance and disappearance are both kept."),
-        h("li", {}, "Correlates flagged names into campaign hypotheses from shared indicators, weighted by rarity and requiring corroboration."),
-        h("li", {}, "Records provenance for every analysis: input cut-offs, dataset SHA-256, rules version, correlation settings and a results SHA-256 that a replay from a snapshot must reproduce.")),
-      h("h3", {}, "What it cannot establish"),
-      h("ul", {},
-        h("li", {}, "That a site is malicious. It never visits sites. A certificate for a look-alike name is a signal, not proof."),
-        h("li", {}, "Who operates anything. Shared infrastructure is a hypothesis about common control, never attribution."),
-        h("li", {}, "Completeness. Phishing on plain HTTP, on compromised legitimate sites, or behind wildcard certificates is invisible to certificate search; crt.sh itself abandons some queries (recorded per run)."),
-        h("li", {}, "Accuracy on real data. The rules are tested against known examples and synthetic campaigns; no labelled ground truth for Bulgarian phishing exists.")),
-      h("h3", {}, "Terms"),
-      table([{ label: "Term", cell: (g) => h("b", {}, g[0]) }, { label: "Meaning", cell: (g) => g[1] }], m.glossary),
-      h("h3", {}, `Scoring rules · ${m.rules_version}`),
+      h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t("meth.title")), h("p", {}, t("meth.intro")))),
+      h("div", { class: "explain warn" }, h("b", {}, `${t("disclaimer.title")} `), t("disclaimer.body")),
+      h("h3", {}, t("meth.does")), h("ol", {}, items("meth.does", 5)),
+      h("h3", {}, t("meth.cannot")), h("ul", {}, items("meth.cannot", 4)),
+      h("h3", {}, t("meth.terms")),
+      table([{ label: t("meth.term"), cell: (g) => h("b", {}, t(`glossary.${g.id}.term`)) }, { label: t("meth.meaning"), cell: (g) => t(`glossary.${g.id}.text`) }], m.glossary),
+      h("h3", {}, t("meth.rules", { v: m.rules_version })),
       table([
-        { label: "Rule", cell: (r) => h("span", { class: "mono" }, r.id) },
-        { label: "Points", num: true, cell: (r) => h("span", { class: "mono" }, r.points) },
-        { label: "Corroborating", cell: (r) => (r.corroborating ? "yes" : "–") },
-        { label: "Meaning", cell: (r) => r.text },
+        { label: t("col.rule"), cell: (r) => h("span", { class: "mono" }, r.id) },
+        { label: t("col.points"), num: true, cell: (r) => h("span", { class: "mono" }, r.points) },
+        { label: t("col.corroborating"), cell: (r) => (r.corroborating ? t("word.yes") : "–") },
+        { label: t("meth.meaning"), cell: (r) => label("rule", r.id) },
       ], m.rules),
-      h("p", { class: "muted", style: { "margin-top": "8px" } }, `Thresholds: likely ≥ ${m.thresholds.likely}, possible ≥ ${m.thresholds.possible}, both requiring a brand and at least one corroborating signal. Recent issuance window: ${m.recent_days} days before the analysis time. Words match only as whole tokens or as complete segmentations of a glued token - never as substrings.`),
-      table([{ label: "Verdict", cell: (v) => verdictChip(v.id) }, { label: "Meaning", cell: (v) => v.text }], m.verdicts),
-      h("h3", {}, "Tracked brands"),
+      h("p", { class: "muted", style: { "margin-top": "8px" } }, t("meth.thresholds", { likely: m.thresholds.likely, possible: m.thresholds.possible, days: m.recent_days })),
+      table([{ label: t("col.verdict"), cell: (v) => verdictChip(v.id) }, { label: t("meth.meaning"), cell: (v) => label("verdict_text", v.id) }], m.verdicts),
+      h("h3", {}, t("meth.brands")),
       table([
-        { label: "Brand", cell: (b) => h("b", {}, b.label) },
-        { label: "Sector", cell: (b) => b.sector },
-        { label: "Match", cell: (b) => (b.ambiguous ? h("span", { title: "needs Bulgarian context, or an exact-label squat on a high-abuse TLD" }, "ambiguous") : "distinctive") },
-        { label: "Phrases", cell: (b) => list(b.phrases) },
-        { label: "crt.sh keywords", cell: (b) => list(b.query_keys) },
-        { label: "Allow-listed", cell: (b) => list(b.official) },
+        { label: t("col.brand"), cell: (b) => h("b", {}, brandLabel(b.id)) },
+        { label: t("col.sector"), cell: (b) => label("sector", b.sector) },
+        { label: t("col.match"), cell: (b) => (b.ambiguous ? h("span", { title: t("meth.ambiguous_title") }, t("meth.ambiguous")) : t("meth.distinctive")) },
+        { label: t("col.phrases"), cell: (b) => list(b.phrases) },
+        { label: t("col.keywords"), cell: (b) => list(b.query_keys) },
+        { label: t("col.allowlisted"), cell: (b) => list(b.official) },
       ], m.brands),
-      h("details", {}, h("summary", {}, "Namesakes, TLD tiers, lure words and context markers"),
-        h("p", {}, h("b", {}, "Namesakes (legitimate, unrelated organisations): ")), table([{ label: "Domain", cell: (x) => h("span", { class: "mono" }, x[0]) }, { label: "Why", cell: (x) => x[1] }], Object.entries(m.namesakes)),
-        h("p", {}, h("b", {}, "High-abuse TLDs")), list(m.tld_high), h("p", {}, h("b", {}, "Moderate-abuse TLDs")), list(m.tld_moderate),
-        h("p", {}, h("b", {}, "Bulgarian lure words")), list(m.lures_bg), h("p", {}, h("b", {}, "English lure words")), list(m.lures_en),
-        h("p", {}, h("b", {}, "Bulgarian context markers")), list(m.bg_markers)),
-      h("h3", {}, "Correlation"),
-      h("p", {}, `Population: names with verdict ${corr.population.join(", ")}. A relationship is accepted if it shares a strong indicator, or if its total weight is at least ${corr.min_edge} from at least ${corr.min_kinds} indicator kinds${corr.require_non_weak ? ", at least one of them not weak" : ""}. Medium and weak indicators weigh base × ln(N / df); values shared by more than max_df names are suppressed as ecosystem noise. Campaigns are connected components; a sparse component (density below ${corr.chained_density} with 4+ names) is labelled chained.`),
+      h("details", {}, h("summary", {}, t("meth.lists")),
+        h("p", {}, h("b", {}, t("meth.namesakes"))), table([{ label: t("col.domain"), cell: (x) => h("span", { class: "mono" }, x[0]) }, { label: t("meth.why"), cell: (x) => tx(x[1]) }], Object.entries(m.namesakes)),
+        h("p", {}, h("b", {}, t("meth.tld_high"))), list(m.tld_high), h("p", {}, h("b", {}, t("meth.tld_moderate"))), list(m.tld_moderate),
+        h("p", {}, h("b", {}, t("meth.lures_bg"))), list(m.lures_bg), h("p", {}, h("b", {}, t("meth.lures_en"))), list(m.lures_en),
+        h("p", {}, h("b", {}, t("meth.markers"))), list(m.bg_markers)),
+      h("h3", {}, t("meth.correlation")),
+      h("p", {}, t("meth.corr_text", { pop: corr.population.map((x) => label("verdict", x)).join(", "), edge: corr.min_edge, kinds: corr.min_kinds, nonweak: corr.require_non_weak ? t("meth.corr_nonweak") : "", chained: corr.chained_density })),
       table([
-        { label: "Indicator kind", cell: (r) => h("span", { class: "mono" }, r[0]) },
-        { label: "Class", cell: (r) => r[1].class },
-        { label: "Base weight", num: true, cell: (r) => r[1].base },
-        { label: "max df", num: true, cell: (r) => r[1].max_df },
+        { label: t("col.indicator_kind"), cell: (r) => h("span", {}, label("kind", r[0]), " ", h("span", { class: "mono faint" }, r[0])) },
+        { label: t("col.class"), cell: (r) => label("class", r[1].class) },
+        { label: t("col.base_weight"), num: true, cell: (r) => r[1].base },
+        { label: t("col.max_df"), num: true, cell: (r) => r[1].max_df },
       ], Object.entries(corr.kinds)),
-      h("h3", {}, "Provenance of the current analysis"),
+      h("h3", {}, t("meth.provenance")),
       kv([
-        ["Analysis", `#${p.analysis_id} · created ${dt(p.created_at)} UTC · as of ${dt(p.as_of)} UTC`],
-        ["Software", `trawl ${p.software_version}`], ["Rules", p.rules_version],
-        ["Correlation config SHA-256", h("span", { class: "mono break" }, p.correlation_sha256)],
-        ["Dataset SHA-256", h("span", { class: "mono break" }, p.dataset_sha256)],
-        ["Results SHA-256", h("span", { class: "mono break" }, p.results_sha256)],
-        ["Input cut-offs", h("span", { class: "mono" }, `run ≤ ${p.cutoffs.run} · record ≤ ${p.cutoffs.record} · dns ≤ ${p.cutoffs.dns}`)],
+        [t("col.analysis"), t("meth.analysis_line", { id: p.analysis_id, created: dt(p.created_at), asof: dt(p.as_of) })],
+        [t("col.software"), `trawl ${p.software_version}`], [t("col.rules"), p.rules_version],
+        [t("meth.corr_sha"), h("span", { class: "mono break" }, p.correlation_sha256)],
+        [t("col.dataset_sha"), h("span", { class: "mono break" }, p.dataset_sha256)],
+        [t("meth.results_sha"), h("span", { class: "mono break" }, p.results_sha256)],
+        [t("meth.cutoffs"), h("span", { class: "mono" }, t("meth.cutoffs_line", { run: p.cutoffs.run, record: p.cutoffs.record, dns: p.cutoffs.dns }))],
       ]),
-      h("p", { class: "muted", style: { "margin-top": "8px" } }, "To reproduce: export the snapshot for this analysis (trawl snapshot), verify it (trawl verify), and replay it (trawl replay) - the replay must produce the same results SHA-256."),
-      h("h3", {}, "Network behaviour"),
-      table([
-        { label: "From", cell: (r) => h("b", {}, r.from) }, { label: "To", cell: (r) => h("span", { class: "mono break" }, r.to) },
-        { label: "Purpose", cell: (r) => r.purpose }, { label: "Note", cell: (r) => h("span", { class: "muted" }, r.note) },
-      ], m.network),
-      h("h3", {}, "Independence"),
-      h("p", {}, "All data is collected by this system from primary public sources (crt.sh, DNS). No third-party phishing feed, seed list, AI classification or external scoring is used at any stage. Earlier beta tools in this project consumed a public feed (detectopod); that dependency was removed by design."));
+      h("p", { class: "muted", style: { "margin-top": "8px" } }, t("meth.reproduce")),
+      h("h3", {}, t("meth.network")), networkTable(m.network),
+      h("h3", {}, t("meth.independence")), h("p", {}, t("meth.independence_text")),
+      h("h3", {}, t("meth.language")), h("p", {}, t("meth.language_text")));
   };
-  PAGES.methodology.title = "Methodology";
+  PAGES.methodology.titleKey = "nav.methodology";
 
-  async function notFound() { return h("div", { class: "errbox" }, "No such page. ", h("a", { href: "#/" }, "Go to the overview.")); }
+  async function notFound() { return h("div", { class: "errbox" }, t("error.no_page"), " ", h("a", { href: "#/" }, t("error.go_overview"))); }
+  notFound.titleKey = "page.not_found";
 
-  // ---------------------------------------------------------------- boot
+  // ---------------------------------------------------------------- chrome + boot
   function fillProvenance() {
+    if (!META) return;
     const p = META.provenance;
-    document.getElementById("prov-chip").textContent = `analysis #${p.analysis_id} · as of ${dt(p.as_of)} UTC · dataset ${short(p.dataset_sha256, 10)}`;
+    document.getElementById("prov-chip").textContent = t("prov.chip", { id: p.analysis_id, asof: dt(p.as_of), sha: short(p.dataset_sha256, 10) });
+    document.getElementById("prov-chip").title = t("prov.chip_title");
     document.getElementById("prov-side").replaceChildren(h("dl", {},
-      h("dt", {}, "analysis"), h("dd", {}, `#${p.analysis_id}`),
-      h("dt", {}, "as of"), h("dd", {}, `${dt(p.as_of)} UTC`),
-      h("dt", {}, "rules"), h("dd", {}, p.rules_version),
-      h("dt", {}, "dataset"), h("dd", { title: p.dataset_sha256 }, short(p.dataset_sha256, 16)),
-      h("dt", {}, "results"), h("dd", { title: p.results_sha256 }, short(p.results_sha256, 16))));
+      h("dt", {}, t("prov.analysis")), h("dd", {}, `#${p.analysis_id}`),
+      h("dt", {}, t("prov.asof")), h("dd", {}, `${dt(p.as_of)} UTC`),
+      h("dt", {}, t("prov.rules")), h("dd", {}, p.rules_version),
+      h("dt", {}, t("prov.dataset")), h("dd", { title: p.dataset_sha256 }, short(p.dataset_sha256, 16)),
+      h("dt", {}, t("prov.results")), h("dd", { title: p.results_sha256 }, short(p.results_sha256, 16))));
+  }
+  function applyStatic() {
+    document.documentElement.lang = LANG;
+    for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+    for (const el of document.querySelectorAll("[data-i18n-placeholder]")) el.setAttribute("placeholder", t(el.dataset.i18nPlaceholder));
+    for (const el of document.querySelectorAll("[data-i18n-aria]")) el.setAttribute("aria-label", t(el.dataset.i18nAria));
+    for (const b of document.querySelectorAll(".langsw button")) b.setAttribute("aria-pressed", b.dataset.lang === LANG ? "true" : "false");
+  }
+  function setLang(lang) {
+    if (!LANGS.includes(lang)) return;
+    LANG = lang;
+    try { localStorage.setItem("trawl.lang", lang); } catch { /* private mode: keep for this page */ }
+    fmt = new Intl.NumberFormat(lang === "bg" ? "bg-BG" : "en-GB");
+    applyStatic();
+    buildNav();
+    fillProvenance();
+    if (META) render();
   }
   async function boot() {
+    LANG = savedLang();
+    try {
+      const r = await fetch("/i18n.json", { credentials: "same-origin" });
+      I18N = await r.json();
+      PATTERNS = (I18N.patterns_bg || []).map(([re, rep]) => [new RegExp(re), rep]);
+    } catch {
+      I18N = { bg: {}, en: {} };
+    }
+    for (const b of document.querySelectorAll(".langsw button")) b.addEventListener("click", () => setLang(b.dataset.lang));
+    fmt = new Intl.NumberFormat(LANG === "bg" ? "bg-BG" : "en-GB");
+    applyStatic();
     buildNav();
     document.getElementById("jump").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -934,7 +1021,7 @@
       META = await api("meta");
       fillProvenance();
     } catch (e) {
-      view.replaceChildren(h("div", { class: "errbox" }, h("b", {}, "No analysis available yet. "), String(e.message || e), h("p", { class: "muted" }, "The collector has not completed a cycle. Run `trawl cycle`, then reload.")));
+      view.replaceChildren(h("div", { class: "errbox" }, h("b", {}, t("error.no_analysis")), " ", h("p", { class: "muted" }, t("error.no_analysis_hint"))));
       return;
     }
     addEventListener("hashchange", render);

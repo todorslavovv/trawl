@@ -1,24 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="bg">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>trawl · CT phishing intelligence</title>
+<title>trawl · CT разузнаване за фишинг</title>
 <link rel="stylesheet" href="/app.css">
 <script src="/app.js" defer></script>
 </head>
 <body>
 <div class="shell">
-  <aside class="side" aria-label="Primary">
+  <aside class="side" data-i18n-aria="aria.primary" aria-label="Основна навигация">
     <a class="brand" href="#/">
       <svg viewBox="0 0 32 32" aria-hidden="true" class="brand-mark"><path d="M4 8c6 5 18 5 24 0M4 16c6 5 18 5 24 0M4 24c6 5 18 5 24 0M9 5v24M16 5v24M23 5v24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      <span><b>trawl</b><small>CT phishing intelligence</small></span>
+      <span><b>trawl</b><small data-i18n="brand.tagline">CT разузнаване за фишинг</small></span>
     </a>
     <nav id="nav"></nav>
     <div class="side-foot">
       <div id="prov-side" class="prov-side"></div>
-      <p class="disclaimer">Independent portfolio / research demonstration. Not affiliated with or endorsed by ГДБОП or any authority. Outputs are leads, not findings.</p>
+      <p class="disclaimer" data-i18n="footer.disclaimer">Независима демонстрация за портфолио / изследване. Не е свързана с ГДБОП или друга институция и не е одобрена от тях. Резултатите са следи, а не установени факти.</p>
     </div>
   </aside>
   <div class="main-col">
@@ -26,9 +26,13 @@
       <div class="crumbs" id="crumbs"></div>
       <form id="jump" class="jump" role="search" autocomplete="off">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        <input id="jump-q" type="search" placeholder="Search domains…  ( / )" aria-label="Search domains" maxlength="100" spellcheck="false">
+        <input id="jump-q" type="search" placeholder="Търсене на домейни…  ( / )" data-i18n-placeholder="search.placeholder" data-i18n-aria="search.aria" aria-label="Търсене на домейни" maxlength="100" spellcheck="false">
       </form>
-      <a id="prov-chip" class="prov-chip" href="#/methodology" title="Provenance of everything on screen"></a>
+      <a id="prov-chip" class="prov-chip" href="#/methodology"></a>
+      <div class="langsw" role="group" data-i18n-aria="lang.group" aria-label="Език">
+        <button type="button" data-lang="bg" aria-pressed="true" lang="bg"><svg viewBox="0 0 5 3" aria-hidden="true" class="flag"><rect width="5" height="1" fill="#fff"/><rect y="1" width="5" height="1" fill="#00966e"/><rect y="2" width="5" height="1" fill="#d62612"/></svg>Български</button>
+        <button type="button" data-lang="en" aria-pressed="false" lang="en"><svg viewBox="0 0 60 30" aria-hidden="true" class="flag"><rect width="60" height="30" fill="#012169"/><path d="M0 0L60 30M60 0L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0L60 30M60 0L0 30" stroke="#c8102e" stroke-width="2"/><path d="M30 0V30M0 15H60" stroke="#fff" stroke-width="10"/><path d="M30 0V30M0 15H60" stroke="#c8102e" stroke-width="6"/></svg>English</button>
+      </div>
     </header>
     <main id="view" tabindex="-1"></main>
   </div>

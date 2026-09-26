@@ -32,7 +32,8 @@ from .names import normalise
 WEB = Path(__file__).parent / "web"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-          "/app.css": ("app.css", "text/css; charset=utf-8")}
+          "/app.css": ("app.css", "text/css; charset=utf-8"),
+          "/i18n.json": ("i18n.json", "application/json; charset=utf-8")}
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -48,31 +49,36 @@ SECURITY_HEADERS = {
 }
 
 NETWORK = [
-    {"from": "collector", "to": "https://crt.sh/ (TLS, certificate verified)",
+    {"id": "collector_crtsh", "from": "collector", "to": "https://crt.sh/ (TLS, certificate verified)",
      "purpose": "Certificate Transparency keyword queries", "when": "each collection run",
      "note": "the only HTTP destination in the code; paced, retried with backoff"},
-    {"from": "collector", "to": "host DNS resolver (systemd-resolved stub, then its upstream)",
+    {"id": "collector_dns", "from": "collector", "to": "host DNS resolver (systemd-resolved stub, then its upstream)",
      "purpose": "re-check whether flagged names resolve", "when": "each cycle",
      "note": "name lookups only; no connection is made to resolved addresses"},
-    {"from": "browser", "to": "this server (same origin)", "purpose": "UI assets and JSON API",
+    {"id": "browser_self", "from": "browser", "to": "this server (same origin)", "purpose": "UI assets, translations and JSON API",
      "when": "always", "note": "enforced by Content-Security-Policy; no fonts, CDNs or analytics"},
-    {"from": "browser", "to": "https://crt.sh/", "purpose": "outbound certificate links",
+    {"id": "browser_crtsh", "from": "browser", "to": "https://crt.sh/", "purpose": "outbound certificate links",
      "when": "only if the investigator clicks one", "note": "rel=noopener noreferrer"},
-    {"from": "deployment", "to": "Cloudflare edge (trycloudflare.com Quick Tunnel)",
+    {"id": "deploy_tunnel", "from": "deployment", "to": "Cloudflare edge (trycloudflare.com Quick Tunnel)",
      "purpose": "temporary public demo access", "when": "only where the tunnel service runs",
      "note": "Cloudflare terminates TLS and sees the traffic it relays"},
 ]
 
 GLOSSARY = [
-    ["Observation", "A recorded fact about a public record: crt.sh returned certificate X "
-                    "listing name Y in run Z; the resolver answered NXDOMAIN at time T."],
-    ["Signal", "A named scoring rule that fired on a name, with its points and the text it matched."],
-    ["Relationship", "Two flagged names sharing indicators, with the evidence and a weight. "
-                     "Accepted only if strong, or corroborated by several independent kinds."],
-    ["Campaign hypothesis", "A connected group of accepted relationships. A lead for an "
-                            "investigator - not proof of common ownership, and never attribution."],
-    ["Verified fact", "Nothing this system outputs. Verification (content capture, registrar or "
-                      "hosting records, legal process) happens outside it."],
+    {"id": "observation", "term": "Observation",
+     "text": "A recorded fact about a public record: crt.sh returned certificate X listing name Y "
+             "in run Z; the resolver answered NXDOMAIN at time T."},
+    {"id": "signal", "term": "Signal",
+     "text": "A named scoring rule that fired on a name, with its points and the text it matched."},
+    {"id": "relationship", "term": "Relationship",
+     "text": "Two flagged names sharing indicators, with the evidence and a weight. Accepted only "
+             "if strong, or corroborated by several independent kinds."},
+    {"id": "hypothesis", "term": "Campaign hypothesis",
+     "text": "A connected group of accepted relationships. A lead for an investigator - not proof "
+             "of common ownership, and never attribution."},
+    {"id": "verified", "term": "Verified fact",
+     "text": "Nothing this system outputs. Verification (content capture, registrar or hosting "
+             "records, legal process) happens outside it."},
 ]
 
 
