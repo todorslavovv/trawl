@@ -1,5 +1,7 @@
 # trawl
 
+> **Try it live here:** https://weekly-ski-whatever-ship.trycloudflare.com
+
 **A public registry of phishing domains that impersonate Bulgarian brands** - couriers,
 banks, state e-services, road tolls and vignettes - built on independent collection,
 explainable scoring and correlation of public Certificate Transparency data.
