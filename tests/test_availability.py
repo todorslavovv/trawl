@@ -547,3 +547,110 @@ def test_run_budget_skips_instead_of_guessing(conn, cfg):
     row = conn.execute("SELECT status, queries_skipped FROM collection_runs WHERE id=?", (rid,)).fetchone()
     assert tuple(row) == ("failed", 2)
     assert conn.execute("SELECT COUNT(*) FROM availability_observations").fetchone()[0] == 0
+
+
+# -- scheduling: which registry names are due --------------------------------------------
+T0 = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+
+
+def _obs(conn, name, state, at, run_status="complete"):
+    """One observation at an exact time (test database only)."""
+    rid = conn.execute("INSERT INTO collection_runs(source_id, started_at, finished_at, status,"
+                       " software_version, config_json) VALUES ('availability', ?, ?, ?, 'test', '{}')",
+                       (at.isoformat(), at.isoformat(), run_status)).lastrowid
+    reason = {"reachable": "http_2xx", "unreachable": "nxdomain", "timeout": "tcp_timeout",
+              "tls_error": "tls_failed", "unknown": "dns_failure"}[state]
+    conn.execute("INSERT INTO availability_observations(run_id, source_id, checker, domain, checked_at,"
+                 " duration_ms, dns, addresses, state, reason) VALUES (?, 'availability', 'test', ?, ?, 1,"
+                 " 'resolved', '[]', ?, ?)", (rid, name, at.isoformat(timespec="seconds"), state, reason))
+    conn.commit()
+
+
+def _hours(h):
+    return T0 + timedelta(hours=h)
+
+
+def test_a_name_is_due_only_after_recheck_hours(conn, cfg):
+    _obs(conn, "a.test", "reachable", T0)
+    wait = cfg["availability"]["recheck_hours"]
+    assert AV.due(conn, cfg, ["a.test"], _hours(wait - 0.1)) == []          # not yet due: skipped
+    assert AV.due(conn, cfg, ["a.test"], _hours(wait)) == ["a.test"]        # due
+
+
+def test_new_names_come_first_then_the_longest_unchecked(conn, cfg):
+    _obs(conn, "old.test", "reachable", _hours(-30))
+    _obs(conn, "older.test", "reachable", _hours(-40))
+    _obs(conn, "recent.test", "reachable", _hours(-1))
+    assert AV.due(conn, cfg, ["recent.test", "old.test", "new.test", "older.test"], T0) == \
+        ["new.test", "older.test", "old.test"]
+
+
+def test_repeatedly_unreachable_moves_to_the_slow_schedule_and_back_when_reachable(conn, cfg):
+    a = cfg["availability"]
+    fast, slow, k = a["recheck_hours"], a["unreachable_recheck_hours"], a["unreachable_after"]
+    for i in range(k - 1):
+        _obs(conn, "x.test", "unreachable", _hours(i * fast))
+    last = (k - 2) * fast
+    assert AV.due(conn, cfg, ["x.test"], _hours(last + fast)) == ["x.test"]      # k-1 misses: still daily
+    _obs(conn, "x.test", "unreachable", _hours(last + fast))                     # k-th miss in a row
+    last += fast
+    assert AV.due(conn, cfg, ["x.test"], _hours(last + fast)) == []              # slow tier now
+    assert AV.due(conn, cfg, ["x.test"], _hours(last + slow)) == ["x.test"]
+    _obs(conn, "x.test", "reachable", _hours(last + slow))                       # it answers again
+    last += slow
+    assert AV.due(conn, cfg, ["x.test"], _hours(last + fast)) == ["x.test"]      # back to daily
+
+
+def test_only_unreachable_results_count_toward_the_slow_tier(conn, cfg):
+    # timeouts, TLS errors and undetermined answers are not evidence that a site is gone
+    for i, st in enumerate(["timeout", "tls_error", "unknown", "timeout"]):
+        _obs(conn, "t.test", st, _hours(i * 24))
+    assert AV.due(conn, cfg, ["t.test"], _hours(3 * 24 + cfg["availability"]["recheck_hours"])) == ["t.test"]
+
+
+def test_a_checker_outage_does_not_move_names_to_the_slow_tier(conn, cfg):
+    _obs(conn, "o.test", "unreachable", _hours(0))
+    _obs(conn, "o.test", "unreachable", _hours(24))
+    _obs(conn, "o.test", "unknown", _hours(48), run_status="failed")   # the checker's DNS was down
+    # the failed run is ignored: two misses, not three, and the last informative check was at +24 h
+    assert AV.due(conn, cfg, ["o.test"], _hours(24 + cfg["availability"]["recheck_hours"])) == ["o.test"]
+    assert AV.summarize(AV.histories(conn, ["o.test"])["o.test"])["checks"] == 2
+
+
+def test_a_forced_run_ignores_the_schedule_but_respects_max_per_run(conn, cfg):
+    for n in ("a.test", "b.test", "c.test"):
+        _obs(conn, n, "reachable", T0)
+    cfg["availability"]["max_per_run"] = 2
+    assert AV.due(conn, cfg, ["a.test", "b.test", "c.test"], _hours(1)) == []
+    rid = _run(conn, cfg, ["a.test", "b.test", "c.test"], {}, force=True)
+    assert conn.execute("SELECT COUNT(*) FROM availability_observations WHERE run_id=?", (rid,)).fetchone()[0] == 2
+
+
+def test_snapshot_manifest_lists_only_the_runs_in_its_dataset(conn, cfg, tmp_path):
+    import json
+
+    from trawl.analysis import run_analysis
+    from trawl.collect import collect_crtsh
+    from trawl.snapshot import export
+
+    from .conftest import FakeCrtsh
+    from .test_pipeline_snapshot import DATA
+    quiet = {"log": lambda *_: None}
+    collect_crtsh(conn, cfg, client=FakeCrtsh(DATA), keywords=["bgpost", "econt", "tollpass"], **quiet)
+    _run(conn, cfg, ["a.test"], {}, force=True)
+    aid = run_analysis(conn, cfg, as_of="2026-09-26T00:00:00+00:00", **quiet)
+    man = json.loads(export(conn, aid, tmp_path).read_text())
+    assert {r["source_id"] for r in man["collection_runs"]} == {"crtsh"}
+
+
+def test_cli_writes_private_files_whatever_the_umask(tmp_path):
+    import os
+
+    from trawl.cli import main
+    old = os.umask(0o022)
+    try:
+        assert main(["--db", str(tmp_path / "u.db"), "dnscheck"]) == 0
+    finally:
+        os.umask(old)
+    for f in ("u.db", "u.db.lock"):
+        assert (tmp_path / f).stat().st_mode & 0o777 == 0o600, f

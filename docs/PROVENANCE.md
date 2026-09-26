@@ -34,7 +34,9 @@ Because observations are append-only, those cut-offs select the same rows foreve
   (`crtsh`, `dns`) and their runs are included; the availability probe's source row and
   runs are not, so availability checks can never change a fingerprint - the first
   production snapshot still replays to its recorded fingerprints after the probe was
-  added.
+  added. The manifest's descriptive `collection_runs` summary follows the same rule from
+  2.2.1 on; the one 2.2.0 manifest (`trawl-a00005-bb04d61844e6`) still lists the
+  availability run there - a summary line only, not part of the data or any fingerprint.
 * **Results SHA-256** - SHA-256 of the canonical results document: every non-`none`
   decision with its signals, suppressed indicators, accepted relationships with
   evidence, and campaigns - all sorted, weights rounded to 4 decimals.

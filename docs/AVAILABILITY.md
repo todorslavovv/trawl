@@ -11,18 +11,47 @@ what those fields do and do not mean.
   latest complete analysis, a few hundred names. The many thousands of raw
   certificate names are never checked.
 * **When:** as a step of the 6-hourly cycle (`collect → DNS re-check → analyze →
-  availability → snapshot`), and with `trawl availability [--force]`. A name is
-  *due* when its last check is older than `availability.recheck_hours` (20 h), so with
-  6-hourly cycles every registry name is checked about **once a day**. Names never
-  checked go first, then the longest-unchecked.
-* **Tier:** a name whose last `unreachable_after` (3) checks were all `unreachable`
-  waits `unreachable_recheck_hours` (68 h, about three days) between checks. Upgrade
-  path if the registry grows: more tiers (e.g. newly listed / recently reachable
-  more often), still configured in `availability.*`.
+  availability → snapshot`), and with `trawl availability [--force]`. The 6-hour timer
+  does **not** mean every name is checked every 6 hours: each cycle checks only the
+  names that are *due* (`trawl/availability.py:due`).
 * **Load:** at most `max_per_run` (500) names per run, `workers` (6) in parallel, one
   TCP connection and one HTTP request per name, a hard time limit per check and a
   run budget (`max_run_minutes`, 45); names not started within the budget are recorded
   as skipped, not guessed.
+
+**Scheduling rules** - exactly what `due()` does:
+
+| Name | Due when | In practice, with 6-hourly cycles |
+|---|---|---|
+| newly in the registry (never checked) | immediately; ahead of every other name | at the first cycle after it enters the registry (≤ 6 h) |
+| otherwise | its latest check is ≥ `recheck_hours` (20 h) old | about every 24 h |
+| its last `unreachable_after` (3) checks were all `unreachable` | its latest check is ≥ `unreachable_recheck_hours` (68 h) old | about every 72 h |
+
+* Only the state `unreachable` (NXDOMAIN, no address, non-public addresses, refused)
+  counts toward the slow tier. Timeouts, TLS errors, 5xx and undetermined results keep
+  the daily schedule - they are not evidence that a site is gone.
+* One reachable (or any non-`unreachable`) check ends the streak: the name is back on
+  the daily schedule.
+* Runs where the checker itself had no working DNS (status `failed`) are ignored, so
+  an outage on trawl's side can neither delay checks nor push names into the slow tier.
+* There is no separate faster-than-daily tier for recently reachable names; newly
+  listed names only get the immediate first check. If the registry grows, more tiers
+  can be added in `availability.*` without changing the history.
+* Order within a run: never-checked names first, then the longest-unchecked;
+  `--force` ignores the schedule (still capped by `max_per_run`).
+
+**How the schedule was verified** (2026-09-26): deterministic tests in
+`tests/test_availability.py` (due / not due at the threshold, new names first,
+3 misses → slow tier → reachable → daily again, timeouts do not count, a checker
+outage is ignored, forced runs); and `due()` evaluated read-only on the production
+observations at fixed times: 0 of 335 due right after the first run, 143 due 20 h after
+the middle of that run, all 335 after 20 h; with `unreachable_after` set to 1 in memory
+the 35 names last seen unreachable were held back at +20 h and due at +68 h. A real
+incremental production run (25 names, run #6, started manually with
+`recheck_hours = 1` and `max_per_run = 25`, recorded in the run's configuration)
+appended 25 observations and left the 335 earlier rows byte-for-byte unchanged. The
+multi-day daily / 3-day rhythm itself has **not yet been observed** in production -
+only its rules have been verified.
 
 A visitor's search **never** triggers a check: `/api/lookup` is a database query in the
 read-only web process, which opens no outbound connection at all (tested).
@@ -139,6 +168,10 @@ shown with a mark, but summaries ignore them.
   fingerprints).
 
 ## Visibility
+
+One residual of the address filter: it cannot know the checking host's own public IP
+address. A name pointing at it would get the same single `GET /` as any public address -
+nothing that the host's router does not already expose to the whole internet.
 
 A check is visible to the domain's operator: the TCP connection comes from the checking
 host's public IP address and the request carries the User-Agent above. That is the

@@ -94,7 +94,7 @@ def export(conn: sqlite3.Connection, analysis_id: int, out_dir: str | os.PathLik
     os.replace(tmp, data_path)
     file_sha = hashlib.sha256(data_path.read_bytes()).hexdigest()
     runs = conn.execute(
-        "SELECT source_id, status, COUNT(*) n FROM collection_runs WHERE id <= ?"
+        f"SELECT source_id, status, COUNT(*) n FROM collection_runs WHERE id <= ? AND source_id IN {_IN}"
         " GROUP BY source_id, status ORDER BY source_id, status", (cut["run"],)).fetchall()
     manifest = {
         "format": "trawl-dataset/1",

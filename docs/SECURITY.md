@@ -124,6 +124,17 @@ how, and the result.
 
 Dated records, newest first; each states what was true for that version.
 
+**2026-09-26, freeze pass (Steam Deck, trawl 2.2.1, rules r3)**
+
+| Check | How | Result |
+|---|---|---|
+| HTTP audit, 75 checks | `deploy/audit_http.py` | 75/75 against the PC development server, 75/75 on the Deck at `http://127.0.0.1:8790`, 75/75 through the Quick Tunnel |
+| Test suite (incl. all SSRF / availability / scheduling tests) | `python3 -m pytest tests` | 518 passed, exit 0, on the PC (Python 3.12.3) and on the Deck (Python 3.13.5) |
+| Public lookup stays database-only | test with socket functions disabled; browser network log on the tunnel | lookups answer from the database; the browser made only same-origin requests; `http://169.254.169.254/` is refused with 400 |
+| File modes | snapshot written from an interactive shell (umask 022) came out 644 - **found in this pass, fixed**: the CLI now sets umask 077 (regression test); the two files were set to 600 | all trawl files 600 in 700 directories |
+| Listening ports, sandboxing | `ss -ltnp`; connects from the PC; `systemd-analyze --user security` | unchanged: only `127.0.0.1:8790` and `127.0.0.1:20242`, both refused from the PC; web / cycle / tunnel 4.5 |
+| Scanner | OWASP ZAP | **not performed**: not installed on the PC or the Deck (not installed for this pass either) |
+
 **2026-09-26, public registry and availability probe (Steam Deck, trawl 2.2.0, rules r3)**
 
 The probe makes outbound connections chosen by database content, so every earlier

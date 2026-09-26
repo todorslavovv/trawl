@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -199,6 +200,7 @@ def main(argv=None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8790)
     args = ap.parse_args(argv)
+    os.umask(0o077)          # database, lock and snapshot files are private, whatever the shell's umask
     cfg = C.load(args.config)
     if args.db:
         cfg["db_path"] = args.db

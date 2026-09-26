@@ -82,7 +82,7 @@ collected. The API, the stored evidence and these documents are in English.
 Python 3.11+ standard library only - no packages to install. Tests use `pytest`.
 
 ```bash
-python3 -m trawl cycle          # collect -> DNS re-check -> analyze -> snapshot (if due)
+python3 -m trawl cycle          # collect -> DNS re-check -> analyze -> availability -> snapshot (if due)
 python3 -m trawl serve          # http://127.0.0.1:8790/
 python3 -m trawl stats
 python3 -m pytest tests -q      # offline; nothing touches the network

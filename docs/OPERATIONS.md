@@ -3,7 +3,7 @@
 ## Requirements
 
 Python 3.11+ (standard library only). Tested on Python 3.12 (development PC) and 3.13
-(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.2.0.
+(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.2.1.
 
 ## Configuration
 

@@ -371,7 +371,7 @@
     return h("div", { class: "registry" },
       h("div", { class: "reg-hero" }, h("h1", {}, t("reg.title")), h("p", { class: "lead" }, t("reg.intro")), form, updated),
       look ? lookupCard(look) : null, tableCard,
-      h("p", { class: "reg-note" }, t("reg.note_reachable")));
+      h("p", { class: "reg-note" }, t("reg.note_status"), " ", t("reg.note_reachable")));
   };
   PAGES[""].titleKey = "nav.registry";
   PAGES[""].public = true;
@@ -393,7 +393,7 @@
           [t("reg.f.last_reachable"), a.last_reachable ? when(a.last_reachable, true) : t("reg.never_confirmed")],
           [t("reg.f.state"), availChip(a.state)],
         ]),
-        h("p", { class: "reg-note" }, t("reg.note_reachable")), tech(e.name));
+        h("p", { class: "reg-note" }, t("reg.note_status"), " ", t("reg.note_reachable")), tech(e.name));
     }
     return h("section", { class: "card result miss", role: "status" },
       h("h2", {}, t("reg.missing_title")), h("div", { class: "result-name" }, look.host),
