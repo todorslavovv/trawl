@@ -2,3 +2,10 @@ data/
 __pycache__/
 .pytest_cache/
 *.pyc
+# never commit databases, locks or credentials, wherever --db points
+*.db
+*.db-wal
+*.db-shm
+*.db.lock
+.env
+*.pem

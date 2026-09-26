@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import VERSION
 from . import config as C
-from .db import connect, recover_interrupted, writer_lock
+from .db import LockBusy, connect, recover_interrupted, writer_lock
 
 
 def _latest_analysis(conn) -> int:
@@ -189,7 +189,11 @@ def main(argv=None) -> int:
     cfg = C.load(args.config)
     if args.db:
         cfg["db_path"] = args.db
-    return globals()[f"cmd_{args.cmd}"](args, cfg)
+    try:
+        return globals()[f"cmd_{args.cmd}"](args, cfg)
+    except LockBusy as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

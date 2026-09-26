@@ -20,8 +20,8 @@ controls, and the audit that was actually performed.
 **Web server (`trawl/server.py`).**
 * Binds `127.0.0.1` by default; a warning is printed for any other host.
 * GET/HEAD only; all other methods → 405. There is no write endpoint.
-* Static assets: three files loaded into memory at start-up and looked up by exact
-  path. No URL is ever mapped to the filesystem: no traversal, no directory listing,
+* Static assets: four files (`index.html`, `app.js`, `app.css`, `i18n.json`) loaded into
+  memory at start-up and looked up by exact path. No URL is ever mapped to the filesystem: no traversal, no directory listing,
   no exposure of `.env`, `.git`, the database or source.
 * Parameters: length-limited; integers range-checked; enums whitelisted; domain names
   validated by the same DNS-name parser as the collector; `parse_qs` field count
@@ -31,6 +31,11 @@ controls, and the audit that was actually performed.
   `\` escaped.
 * Database opened with `mode=ro` and `PRAGMA query_only=ON`.
 * Errors: fixed JSON bodies (`internal error`); tracebacks go to the service log only.
+  Protocol errors (unparsable request line, unsupported HTTP version, oversize or too
+  many headers) get a fixed `{"error":"bad request"}` over HTTP/1.0 with the security
+  headers, and the connection is closed. The standard library's default would answer
+  an unparsable request line HTTP/0.9-style: no headers, and an HTML page echoing the
+  input.
 * Headers on every response: `Content-Security-Policy: default-src 'none';
   script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';
   font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
@@ -63,7 +68,9 @@ directory.
 **Deployment (systemd user units).** `NoNewPrivileges`, `PrivateTmp`,
 `ProtectSystem=strict`, write access only to `~/trawl-data`, `UMask=0077`. The web
 service listens on 127.0.0.1:8790 only. The tunnel runs `cloudflared` with only the
-documented `--no-autoupdate` and `--url` flags.
+documented `--no-autoupdate` and `--url` flags, under its own sandbox (read-only home,
+private `/dev` and `/tmp`, kernel/clock/hostname protection, address families limited
+to UNIX/IPv4/IPv6/netlink, `@system-service` system-call filter, no W+X memory).
 
 ## Automated checks (run on every test run)
 
@@ -81,6 +88,21 @@ See the "Audit log" section below - it lists what was checked on the deployed sy
 how, and the result.
 
 ## Audit log
+
+**2026-09-26, final state (Steam Deck, trawl 2.1.2, rules r3)**
+
+| Check | How | Result |
+|---|---|---|
+| HTTP audit | `deploy/audit_http.py`, 63 checks: exposure paths (`/.env`, `/.git`, `/metrics`, `/debug`, the database...), methods, traversal, parameter validation, XSS reflection, CORS preflight, redirects, oversize header, malformed request line, smuggling, HTTP/1.0, headers, provenance | 63/63 against the PC development server, 63/63 on the Deck at `http://127.0.0.1:8790`, 63/63 through the Quick Tunnel |
+| Malformed request line (**found in this audit, fixed**) | raw socket | before: an HTTP/0.9-style answer with no headers and an HTML page echoing the input; after: fixed JSON `bad request`, security headers, connection closed. Regression tests in `tests/test_server.py`. Through the tunnel, Cloudflare's edge rejects such a request itself (400) before it reaches the origin |
+| Listening ports | `ss -ltnp` on the Deck; TCP connects from the PC over the tailnet | added by trawl: `127.0.0.1:8790` (trawl-web) and `127.0.0.1:20242` (cloudflared metrics), both loopback; 8790 and 20242 refused from the PC |
+| Metrics not public | `/metrics` through the tunnel | 404 from trawl: the tunnel forwards only to 127.0.0.1:8790, cloudflared's own metrics port is not routed |
+| TLS through the tunnel | `curl -v` | TLS 1.3, HTTP/2, CSP and the other security headers present end to end |
+| Sandboxing | `systemd-analyze --user security` | trawl-web 4.5, trawl-cycle 4.5, trawl-tunnel 4.5 (7.6 before the tunnel unit was sandboxed); all "OK" |
+| Tunnel stability | `systemctl --user restart trawl-web`; `kill -9` of the web process | the web process came back (`Restart=on-failure`); tunnel PID and public hostname unchanged (the tunnel unit uses `Wants=`, not `Requires=`) |
+| Single writer | writer lock held with `flock`, then `trawl analyze` | refused with one line and exit status 2 (a traceback before 2.1.2); database untouched |
+| Reproducibility | `trawl verify` + `trawl replay` of production snapshot `trawl-a00001-a96e362dc17f`, on the PC and on the Deck | both fingerprints match; `"reproduced": true` |
+| Scanner | OWASP ZAP baseline | **not performed**: ZAP is not installed on the PC or the Deck |
 
 **2026-09-26, deployed system (Steam Deck, trawl 2.1.0, rules r3)**
 

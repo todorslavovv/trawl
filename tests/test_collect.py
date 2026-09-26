@@ -188,3 +188,14 @@ def test_interrupted_runs_are_marked(conn, cfg):
     conn.commit()
     assert recover_interrupted(conn) == 1
     assert conn.execute("SELECT status FROM collection_runs").fetchone()[0] == "interrupted"
+
+
+def test_second_writer_is_refused_cleanly(cfg, capsys):
+    import fcntl
+    from trawl.cli import main
+    from trawl.db import connect
+    connect(cfg["db_path"]).close()
+    with open(cfg["db_path"] + ".lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        rc = main(["--db", cfg["db_path"], "analyze"])
+    assert rc == 2 and "another trawl writer is running" in capsys.readouterr().err

@@ -137,9 +137,11 @@ def raw(payload: bytes) -> bytes:
 host = U.hostname.encode()
 resp = raw(b"GARBAGE / NOT-HTTP\r\nHost: " + host + b"\r\n\r\n")
 status_line = resp.split(b"\r\n", 1)[0]
-check("malformed request line: status line + 4xx/5xx, no HTML, input not echoed",
-      status_line.startswith(b"HTTP/1.") and status_line.split(b" ")[1][:1] in (b"4", b"5")
-      and b"<html" not in resp.lower() and b"NOT-HTTP" not in resp and b"Traceback" not in resp, status_line)
+edge_rejected = b"400 Bad Request" in resp and b"cloudflare" in resp.lower()   # never reached the origin
+origin_ok = (status_line.startswith(b"HTTP/1.") and status_line.split(b" ")[1][:1] in (b"4", b"5")
+             and b"<html" not in resp.lower())
+check("malformed request line: rejected, input not echoed" + (" (by the proxy edge)" if edge_rejected else ""),
+      (origin_ok or edge_rejected) and b"NOT-HTTP" not in resp and b"Traceback" not in resp, status_line[:40])
 resp = raw(b"GET /api/meta HTTP/1.1\r\nHost: " + host + b"\r\nContent-Length: 34\r\nConnection: keep-alive\r\n\r\nGET /api/sources HTTP/1.1\r\nHost: x\r\n\r\n")
 check("request body cannot smuggle a second request", resp.count(b"HTTP/1.1 200") <= 1, resp.count(b"HTTP/1.1 "))
 resp = raw(b"GET /api/meta HTTP/1.0\r\nHost: " + host + b"\r\n\r\n")

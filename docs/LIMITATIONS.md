@@ -17,9 +17,13 @@ Stated plainly, so that nothing on the site or in a report is read as more than 
 * **crt.sh is a single, unreliable free dependency.** It abandons expensive scans
   (answering `[]` or a truncated list), returns spurious 404s, and is slow. The system
   records every such outcome and marks runs `partial`, but a partial run *is*
-  incomplete coverage. On the first live run most `%keyword%` scans were abandoned, so
-  coverage for those keywords rests on the prefix query (`keyword%`) - names where the
-  keyword is not at the start of the name (`my-econt-pay.top`) are then missed.
+  incomplete coverage. On the first production run (2026-09-25, 18 keywords) crt.sh
+  abandoned 17 of the 18 `%keyword%` scans and 11 of the 17 `%.keyword%` fallbacks, and
+  one prefix query still failed (HTTP 502) after retries: coverage was `full` for 1
+  keyword and `partial` for 17. For those, coverage rests on the prefix query
+  (`keyword%`) and, where it answered, the dotted fallback (keyword at the start of a
+  label) - a name with the keyword in the middle of a label (`my-econt-pay.top`) is then
+  missed.
 * **Only unexpired certificates are collected**, because crt.sh caps large full-history
   answers to their oldest rows (measured: `econt%` stopped at 2018). A certificate that
   was issued and expired between two collection runs - rare with 6-hourly runs and

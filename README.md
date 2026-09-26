@@ -47,6 +47,14 @@ serve ─► read-only JSON API + dark investigation UI on 127.0.0.1
    version and correlation settings; which exact dataset (SHA-256) produced a result.
    A snapshot of that dataset replays to the same results fingerprint.
 
+## Interface language
+
+The UI is **Bulgarian by default**, with **English** as the alternative (the
+"🇧🇬 Български / 🇬🇧 English" switch in the header; the choice is remembered in the
+browser). Labels, explanations, errors and evidence sentences are translated; data -
+domain names, certificate fields, hashes, identifiers, timestamps - is shown as
+collected. The API, the stored evidence and these documents are in English.
+
 ## Quick start
 
 Python 3.11+ standard library only - no packages to install. Tests use `pytest`.

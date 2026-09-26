@@ -3,7 +3,7 @@
 ## Requirements
 
 Python 3.11+ (standard library only). Tested on Python 3.12 (development PC) and 3.13
-(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.1.1.
+(SteamOS 3.8 on the Steam Deck). `pytest` for the test suite. Current version: 2.1.2.
 
 ## Configuration
 
@@ -45,7 +45,8 @@ python3 -m trawl [--config F] [--db PATH] <command>
 ```
 
 Writers (`collect`, `dnscheck`, `analyze`, `cycle`, `snapshot`) take an exclusive
-lock (`<db>.lock`); a second writer exits immediately. On start, runs left `running`
+lock (`<db>.lock`); a second writer is refused immediately with one line on stderr
+(`refused: another trawl writer is running (lock held)`) and exit status 2. On start, runs left `running`
 by a killed process are marked `interrupted`.
 
 ## Deployment on the Steam Deck
@@ -69,7 +70,7 @@ ssh deck@steamdeck-1 'systemctl --user enable --now trawl-tunnel.service'   # pu
 |---|---|
 | `trawl-cycle.service` + `.timer` | one cycle every 6 h (`OnUnitActiveSec=6h`, `Persistent=true`); sandboxed (`ProtectSystem=strict`, write access only to `~/trawl-data`, `NoNewPrivileges`, `PrivateTmp`) |
 | `trawl-web.service` | `serve --host 127.0.0.1 --port 8790`; same sandboxing |
-| `trawl-tunnel.service` | `~/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790` |
+| `trawl-tunnel.service` | `~/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790`; `Wants=trawl-web.service` (not `Requires=`), so a web restart does not restart the tunnel; sandboxed (read-only home, private `/dev`, restricted address families, system-call filter) |
 
 `Linger=no` means user services stop when the `deck` user session ends; the Deck is
 kept logged in (it runs other user services the same way). Enabling linger is a system
@@ -95,8 +96,9 @@ persistent, use a named, managed Cloudflare Tunnel with Access policies instead.
 
 ### Updating
 
-`./deploy/push.sh` then `systemctl --user restart trawl-web`. The cycle picks up new
-code on its next run. If `RULES_VERSION` changed, the next analysis re-scores
+`./deploy/push.sh` then `systemctl --user restart trawl-web`. The tunnel keeps running
+and the public hostname stays the same. The cycle picks up new code on its next run.
+Restarting `trawl-tunnel` (only needed when its unit changes) issues a new hostname. If `RULES_VERSION` changed, the next analysis re-scores
 everything under the new rules; old analyses keep their recorded rules version.
 
 ## Logs and health

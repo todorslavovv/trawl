@@ -55,5 +55,6 @@ exists; the rules are tested on known examples and synthetic campaigns).
 ## Language
 
 The docs, API and UI use: *observation*, *signal*, *lead*, *relationship*, *potential
-campaign* / *campaign hypothesis*. They do not say "identifies criminal groups",
+campaign* / *campaign hypothesis* (in the Bulgarian UI: *наблюдение*, *сигнал*, *следа*,
+*връзка*, *хипотеза за кампания*). They do not say "identifies criminal groups",
 "attributes", or "confirms".

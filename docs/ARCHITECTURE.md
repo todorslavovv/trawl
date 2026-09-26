@@ -28,7 +28,7 @@
 | `trawl/analysis.py` | one analysis run: load facts at fixed cut-offs, score, extract indicators, correlate, write results, fingerprint |
 | `trawl/snapshot.py` | canonical dataset serialisation, dataset fingerprint, portable snapshot export, verify, import, replay |
 | `trawl/server.py` | read-only JSON API and static UI, strict headers, validated parameters |
-| `trawl/web/` | `index.html`, `app.css`, `app.js` - the investigation UI, no external assets |
+| `trawl/web/` | `index.html`, `app.css`, `app.js` - the investigation UI, no external assets; `i18n.json` - every UI string in Bulgarian (default) and English, plus patterns that render the stored English evidence sentences in Bulgarian |
 | `trawl/cli.py` | commands (`collect`, `dnscheck`, `analyze`, `cycle`, `snapshot`, `verify`, `replay`, `report`, `stats`, `serve`) |
 
 Source adapters are modules exposing a `SOURCE` description (stored in the `sources`

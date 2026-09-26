@@ -13,13 +13,26 @@ Wants=trawl-web.service
 ExecStart=%h/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8790
 Restart=on-failure
 RestartSec=10
+UMask=0077
+# Sandboxing (verified to start under the SteamOS user manager). cloudflared needs
+# outbound network only; it writes nothing to disk in Quick Tunnel mode.
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=yes
+RestrictRealtime=yes
 LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 
 [Install]
 WantedBy=default.target

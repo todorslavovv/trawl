@@ -299,6 +299,10 @@ def connect(path: str | os.PathLike, *, readonly: bool = False) -> sqlite3.Conne
     return conn
 
 
+class LockBusy(RuntimeError):
+    """Another trawl writer holds the lock."""
+
+
 @contextmanager
 def writer_lock(db_path: str | os.PathLike):
     """One writer at a time. Held for the whole of collect / dnscheck / analyze.
@@ -313,7 +317,7 @@ def writer_lock(db_path: str | os.PathLike):
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError("another trawl writer is running (lock held)") from None
+            raise LockBusy("another trawl writer is running (lock held)") from None
         yield
     finally:
         fcntl.flock(fh, fcntl.LOCK_UN)
